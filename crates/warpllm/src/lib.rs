@@ -6,6 +6,7 @@ mod error;
 mod http;
 mod model;
 mod normalized;
+mod protocol;
 mod providers;
 
 pub mod types;
