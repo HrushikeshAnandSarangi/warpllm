@@ -53,10 +53,14 @@ export interface Choice {
   message: ChatCompletionMessage
 }
 
-/** Both arrays are required and non-nullable when `logprobs` is present. */
+/**
+ * OpenAI documents both arrays as required; OpenAI-compatible backends are
+ * looser — DeepSeek omits `refusal` entirely and can null `content` — so
+ * both are optional here.
+ */
 export interface ChoiceLogprobs {
-  content: ChatCompletionTokenLogprob[]
-  refusal: ChatCompletionTokenLogprob[]
+  content?: ChatCompletionTokenLogprob[] | null
+  refusal?: ChatCompletionTokenLogprob[] | null
 }
 
 export interface ChatCompletionTokenLogprob {

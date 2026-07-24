@@ -72,11 +72,15 @@ pub struct Choice {
     pub unknown_fields: UnknownFields,
 }
 
-/// Both arrays are required and non-nullable when `logprobs` is present.
+/// OpenAI documents both arrays as required; OpenAI-compatible backends
+/// are looser — DeepSeek omits `refusal` entirely and can null `content` —
+/// so both are optional here and absent fields stay off the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChoiceLogprobs {
-    pub content: Vec<ChatCompletionTokenLogprob>,
-    pub refusal: Vec<ChatCompletionTokenLogprob>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<ChatCompletionTokenLogprob>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<Vec<ChatCompletionTokenLogprob>>,
     #[serde(flatten)]
     pub unknown_fields: UnknownFields,
 }

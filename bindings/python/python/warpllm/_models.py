@@ -88,10 +88,12 @@ class ChatCompletionTokenLogprob:
 
 @dataclass
 class ChoiceLogprobs:
-    """Both arrays are required and non-nullable when `logprobs` is present."""
+    """OpenAI documents both arrays as required; OpenAI-compatible backends
+    are looser — DeepSeek omits `refusal` entirely and can null `content` —
+    so both are optional here."""
 
-    content: list[ChatCompletionTokenLogprob]
-    refusal: list[ChatCompletionTokenLogprob]
+    content: list[ChatCompletionTokenLogprob] | None = None
+    refusal: list[ChatCompletionTokenLogprob] | None = None
 
 
 @dataclass
@@ -199,10 +201,13 @@ def _token_logprob_from_dict(
 
 
 def _logprobs_from_dict(data: dict[str, Any]) -> ChoiceLogprobs:
-    return ChoiceLogprobs(
-        content=[_token_logprob_from_dict(t) for t in data["content"]],
-        refusal=[_token_logprob_from_dict(t) for t in data["refusal"]],
-    )
+    def tokens(key: str) -> list[ChatCompletionTokenLogprob] | None:
+        entries = data.get(key)
+        if entries is None:
+            return None
+        return [_token_logprob_from_dict(t) for t in entries]
+
+    return ChoiceLogprobs(content=tokens("content"), refusal=tokens("refusal"))
 
 
 def _message_from_dict(data: dict[str, Any]) -> ChatCompletionMessage:
