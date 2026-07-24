@@ -9,13 +9,14 @@ The destination: a self-hosted, Rust-fast gateway you can put in front of every 
 - Rust core with **OpenAI chat completions** (non-streaming): `provider/model` routing strings, env-var key pickup, typed errors.
 - **Exact OpenAI `chat.completion` response shape** — a field-for-field copy of the upstream API, enforced by fixture round-trip tests and SDK-parity checks against the official OpenAI Python and Node SDKs.
 - **Python and Node bindings** over the shared Rust core (PyO3 / napi-rs) with idiomatic typed clients and exceptions — currently built from source.
+- **Normalized chat core + provider registry** — requests and responses normalize into an internal canonical form (block-based content, namespaced provider passthrough) converted per protocol, so an OpenAI-compatible provider is one line of registry data plus per-model specs (supported endpoints, token limits). Parameters pass through untouched — each provider is the authority on what it supports. First proof: **DeepSeek**.
 
 ## Now — Q3 2026
 
 - **Streaming** chat completions (SSE), in Rust and both bindings.
 - **Publish the bindings**: `pip install warpllm` and `npm install warpllm` with prebuilt wheels/binaries — no Rust toolchain required.
-- **OpenAI-compatible providers** — DeepSeek, Mistral, Groq, Together, and friends. The core is already structured so these reuse the OpenAI wire types and only carry their own quirks.
-- **Anthropic** — the first fully translated provider (its own wire format in, OpenAI shape out).
+- **OpenAI-compatible providers** — Mistral, Groq, Together, and friends: each is now a one-line registry entry over the OpenAI-compatible protocol.
+- **Anthropic** — the first fully translated provider (its own wire format in, OpenAI shape out). Prerequisite: typed tools/multipart content on the OpenAI-compatible wire types (today they pass through untyped), then cross-dialect feature emulation and the verbatim passthrough fast path.
 - **More OpenAI endpoints** beyond chat: embeddings and moderations first.
 
 ## Next — Q4 2026

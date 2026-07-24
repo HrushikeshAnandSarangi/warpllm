@@ -67,6 +67,11 @@ async fn unknown_request_fields_are_forwarded() {
         .await;
 
     let mut req = request("openai/gpt-4o");
+    // Vendor extensions pass through verbatim...
+    req.unknown_fields.insert("vendor_beta".into(), json!(40));
+    req.unknown_fields.insert("seed".into(), json!(7));
+    // ...including params OpenAI doesn't document (top_k): the provider
+    // is the authority on its own parameters.
     req.unknown_fields.insert("top_k".into(), json!(40));
     req.messages[0]
         .unknown_fields
@@ -75,6 +80,8 @@ async fn unknown_request_fields_are_forwarded() {
 
     let sent: serde_json::Value =
         serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
+    assert_eq!(sent["vendor_beta"], 40);
+    assert_eq!(sent["seed"], 7);
     assert_eq!(sent["top_k"], 40);
     assert_eq!(sent["messages"][0]["name"], "alice");
 }
@@ -199,6 +206,51 @@ async fn stream_true_is_rejected_before_any_request() {
         "{err:?}"
     );
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn response_unknowns_and_tool_calls_round_trip_to_caller() {
+    let mut body = openai_completion_body();
+    body["choices"][0]["message"]["tool_calls"] = json!([
+        {
+            "id": "call-1",
+            "type": "function",
+            "function": {"arguments": "{\"z\":1,\"a\":2}", "name": "search"}
+        },
+        {
+            "id": "call-2",
+            "type": "custom",
+            "custom": {"input": "raw text", "name": "my_tool"}
+        }
+    ]);
+    body["choices"][0]["message"]["reasoning_content"] = json!("step by step");
+    body["choices"][0]["vendor_choice_field"] = json!(true);
+    body["vendor_top_field"] = json!("surprise");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body.clone()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let completion = client_for(&server)
+        .chat_completion(request("openai/gpt-4o"))
+        .await
+        .unwrap();
+
+    // The full pipeline (ingest → normalized → render) must hand the
+    // caller exactly what the provider sent, model echo aside. The
+    // explicit `"logprobs": null` is dropped by the wire types themselves
+    // (Option + skip_serializing_if, predating normalization).
+    let mut expected = body;
+    expected["model"] = json!("openai/gpt-4o");
+    expected["choices"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("logprobs");
+    assert_eq!(serde_json::to_value(&completion).unwrap(), expected);
 }
 
 #[tokio::test]

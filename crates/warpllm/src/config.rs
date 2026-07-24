@@ -5,9 +5,9 @@ use serde::Deserialize;
 /// Matches the OpenAI SDK's default request timeout.
 pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
-/// Deliberately holds no API key: the client reads `OPENAI_API_KEY` from the
-/// environment (exactly like the OpenAI SDKs), and gateways forward each
-/// caller's bearer via [`crate::Client::with_api_key`].
+/// Deliberately holds no API key: the client reads each provider's env var
+/// (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, …) at request time, and gateways
+/// forward each caller's bearer via [`crate::Client::with_api_key`].
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientConfig {

@@ -12,8 +12,8 @@ pub(crate) async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok", "version": warpllm::version()}))
 }
 
-/// The gateway authenticates upstream with its own provider keys
-/// (`OPENAI_API_KEY` for now; a configuration surface later). The caller's
+/// The gateway authenticates upstream with its own provider keys (each
+/// provider's env var; a configuration surface later). The caller's
 /// Authorization header is ignored, never forwarded — providers each have
 /// their own auth methods, so failover rules out per-caller passthrough.
 pub(crate) async fn chat_completions(State(state): State<AppState>, body: Bytes) -> Response {

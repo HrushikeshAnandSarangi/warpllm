@@ -11,7 +11,7 @@ fn env_key_with_api_key_override_and_missing_key() {
 
     temp_env::with_var("OPENAI_API_KEY", Some("sk-from-env"), || {
         runtime.block_on(async {
-            // 1. The env key is read at construction and used as bearer.
+            // 1. The env key is resolved at request time and used as bearer.
             let server = MockServer::start().await;
             Mock::given(method("POST"))
                 .and(header("authorization", "Bearer sk-from-env"))

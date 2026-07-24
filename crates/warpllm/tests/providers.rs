@@ -6,3 +6,9 @@ mod openai_chat_completions;
 
 #[path = "providers/openai/config_env.rs"]
 mod openai_config_env;
+
+#[path = "providers/deepseek/chat/completions/mod.rs"]
+mod deepseek_chat_completions;
+
+#[path = "providers/deepseek/config_env.rs"]
+mod deepseek_config_env;
