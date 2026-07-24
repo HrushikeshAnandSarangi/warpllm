@@ -1,5 +1,8 @@
-//! OpenAI request and response types. Other providers translate to and from
-//! these, so callers see one shape regardless of upstream.
+//! OpenAI-compatible request and response types — warpllm's permissive
+//! superset of the OpenAI shapes (the authoritative OpenAI spec lives in
+//! <https://github.com/openai/openai-openapi>; changes to it belong
+//! upstream). Other providers translate to and from these, so callers see
+//! one shape regardless of upstream.
 //!
 //! The response section is a field-for-field copy of the `chat.completion`
 //! object, keeping upstream object names and field order:

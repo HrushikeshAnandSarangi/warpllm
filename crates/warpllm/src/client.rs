@@ -6,7 +6,7 @@ use crate::config::{ClientConfig, DEFAULT_TIMEOUT_SECS};
 use crate::error::{Error, Result};
 use crate::model::{Provider, parse_model};
 use crate::providers;
-use crate::types::openai::chat::completions::{
+use crate::types::openai_compat::chat::completions::{
     CreateChatCompletionRequest, CreateChatCompletionResponse,
 };
 

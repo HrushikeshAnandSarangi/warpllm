@@ -1,4 +1,4 @@
-//! OpenAI provider: the wire format already matches `crate::types::openai`,
+//! OpenAI provider: the wire format already matches `crate::types::openai_compat`,
 //! so endpoint impls only strip the `openai/` model prefix and map errors.
 //! The error envelope below is provider-wide and shared by every endpoint.
 

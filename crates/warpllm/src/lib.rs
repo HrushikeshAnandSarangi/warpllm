@@ -12,7 +12,7 @@ pub mod types;
 pub use client::Client;
 pub use config::ClientConfig;
 pub use error::{Error, Result};
-pub use types::openai::chat::completions::*;
+pub use types::openai_compat::chat::completions::*;
 
 /// Returns the warpllm version.
 ///
