@@ -559,4 +559,27 @@ mod tests {
 
         assert_eq!(serde_json::to_value(&completion).unwrap(), body);
     }
+
+    /// Byte-level, not Value-level: some providers' prompt caches hash the
+    /// request bytes, so unknown fields must keep the caller's key order
+    /// (requires serde_json's `preserve_order` feature).
+    #[test]
+    fn unknown_field_order_is_preserved() {
+        let mut request = CreateChatCompletionRequest {
+            model: "openai/gpt-4o".into(),
+            ..Default::default()
+        };
+        request
+            .unknown_fields
+            .insert("zeta".into(), serde_json::json!(1));
+        request
+            .unknown_fields
+            .insert("alpha".into(), serde_json::json!(2));
+
+        let wire = serde_json::to_string(&request).unwrap();
+        assert!(
+            wire.find("zeta").unwrap() < wire.find("alpha").unwrap(),
+            "insertion order lost: {wire}"
+        );
+    }
 }
