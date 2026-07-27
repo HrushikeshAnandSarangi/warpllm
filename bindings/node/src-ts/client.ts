@@ -35,7 +35,7 @@ class Chat {
 }
 
 /**
- * Model strings are `provider/model`, e.g. `"openai/gpt-4o"`. API keys come
+ * Model strings are `provider/model`, e.g. `"openai/gpt-5.6"`. API keys come
  * from the environment (OPENAI_API_KEY), exactly like the OpenAI SDK; a
  * provider's key is only required when a request targets that provider.
  */

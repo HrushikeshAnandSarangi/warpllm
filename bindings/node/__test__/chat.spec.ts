@@ -14,7 +14,7 @@ const OPENAI_COMPLETION = {
   id: 'chatcmpl-123',
   object: 'chat.completion',
   created: 1_700_000_000,
-  model: 'gpt-4o-2024-08-06',
+  model: 'gpt-5.6-2024-08-06',
   choices: [
     {
       index: 0,
@@ -56,13 +56,13 @@ test('openai happy path', async () => {
   server.respondWith(200, OPENAI_COMPLETION)
 
   const completion = await client.chat.completions.create({
-    model: 'openai/gpt-4o',
+    model: 'openai/gpt-5.6',
     messages: MESSAGES,
   })
 
   expect(completion.choices[0].message.content).toBe('Hello there!')
   expect(completion.choices[0].finish_reason).toBe('stop')
-  expect(completion.model).toBe('openai/gpt-4o')
+  expect(completion.model).toBe('openai/gpt-5.6')
   expect(completion.usage?.total_tokens).toBe(21)
   expect(completion.service_tier).toBe('default')
   expect(completion.system_fingerprint).toBe('fp_44709d6fcb')
@@ -74,7 +74,7 @@ test('openai happy path', async () => {
   expect(sent.url).toBe('/chat/completions')
   expect(sent.headers.authorization).toBe('Bearer sk-test-openai')
   // Provider prefix stripped from the outbound model.
-  expect((sent.body as { model: string }).model).toBe('gpt-4o')
+  expect((sent.body as { model: string }).model).toBe('gpt-5.6')
 })
 
 test('401 rejects with AuthenticationError', async () => {
@@ -83,7 +83,7 @@ test('401 rejects with AuthenticationError', async () => {
   })
 
   const err = await client.chat.completions
-    .create({ model: 'openai/gpt-4o', messages: MESSAGES })
+    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
     .catch((e: unknown) => e)
 
   expect(err).toBeInstanceOf(AuthenticationError)
@@ -98,21 +98,21 @@ test('invalid model rejects unsupported provider', async () => {
     .catch((e: unknown) => e)
 
   expect(err).toBeInstanceOf(InvalidRequestError)
-  expect((err as InvalidRequestError).message).toContain('not a supported provider')
+  expect((err as InvalidRequestError).message).toContain('no registered model spec')
 })
 
 test('bare model name is rejected', async () => {
   const err = await client.chat.completions
-    .create({ model: 'gpt-4o', messages: MESSAGES })
+    .create({ model: 'gpt-5.6', messages: MESSAGES })
     .catch((e: unknown) => e)
 
   expect(err).toBeInstanceOf(InvalidRequestError)
-  expect((err as InvalidRequestError).message).toContain('not a supported provider')
+  expect((err as InvalidRequestError).message).toContain('no registered model spec')
 })
 
 test('stream: true rejects as not implemented', async () => {
   const err = await client.chat.completions
-    .create({ model: 'openai/gpt-4o', messages: MESSAGES, stream: true })
+    .create({ model: 'openai/gpt-5.6', messages: MESSAGES, stream: true })
     .catch((e: unknown) => e)
 
   expect(err).toBeInstanceOf(NotImplementedError)

@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn chat_request_round_trips_and_skips_source() {
         let mut request = ChatRequest {
-            model: "gpt-4o".into(),
+            model: "gpt-5.6".into(),
             messages: vec![Message {
                 role: Role::User,
                 content: vec![ContentBlock::Text {
@@ -144,7 +144,7 @@ mod tests {
             stream: false,
             source: Some(IngestSource {
                 dialect: Dialect::OpenAiCompat,
-                body: json!({"model": "openai/gpt-4o"}),
+                body: json!({"model": "openai/gpt-5.6"}),
             }),
             ..Default::default()
         };

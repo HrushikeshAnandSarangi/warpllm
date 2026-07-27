@@ -8,7 +8,7 @@
 //! <https://github.com/openai/openai-openapi>; we track it and contribute
 //! changes there rather than fork it. A provider with its own wire format
 //! gets a sibling family here (e.g. `anthropic::messages`) and its impl
-//! under `crate::providers` translates via the normalized request.
+//! under `crate::protocol` translates via the normalized request.
 
 pub mod openai_compat;
 

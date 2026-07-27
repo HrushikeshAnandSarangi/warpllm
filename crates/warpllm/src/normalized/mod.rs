@@ -1,6 +1,5 @@
 //! The normalized chat forms: warpllm's canonical request/response, the
-//! internal shape every protocol converts to and from. Informed by
-//! LiteLLM, OpenRouter, Bifrost, and rust-genai; closest in spirit to the
+//! internal shape every protocol converts to and from. Closest in spirit to the
 //! OpenAI Responses API's item/block model, which subsumes chat completions.
 //!
 //! Contract: converting INTO these types is lossless (unmodeled fields ride

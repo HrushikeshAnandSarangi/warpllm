@@ -6,7 +6,12 @@
 //! `openai_compat::chat::completions`.
 //!
 //! Provider-specific logic does NOT live here: per-model specs are
-//! contributed by `crate::providers` and consulted by the client around
-//! these conversions.
+//! contributed by `crate::registry` and consulted by the client around
+//! these conversions. [`Protocol`] is the one thing pointing the other way —
+//! the registry names a wire format, so the name is declared here with the
+//! modules that implement it.
 
 pub(crate) mod openai_compat;
+mod types;
+
+pub use types::Protocol;

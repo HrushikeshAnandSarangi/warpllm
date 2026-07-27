@@ -23,6 +23,10 @@ serde = { version = "1", features = ["derive"] }
 # preserve_order: several providers' prompt caches are byte-sensitive; a
 # BTreeMap-backed Map silently alphabetizes unknown fields in flight.
 serde_json = { version = "1", features = ["preserve_order"] }
+# The model registry is YAML on disk, compiled into the binary with
+# `include_str!` and parsed once on first lookup. The upstream `serde_yaml` was
+# archived in 2024; this is The YAML Organization's maintained continuation.
+yaml_serde = "0.10.4"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 tower-http = { version = "0.6", features = ["trace"] }

@@ -16,14 +16,14 @@ async fn openai_happy_path() {
         .await;
 
     let completion = client_for(&server)
-        .chat_completion(request("openai/gpt-4o"))
+        .chat_completion(request("openai/gpt-5.6"))
         .await
         .unwrap();
 
     assert_eq!(completion.id, "chatcmpl-123");
     assert_eq!(completion.object, "chat.completion");
     // Echoes the caller's provider-prefixed string, not the upstream name.
-    assert_eq!(completion.model, "openai/gpt-4o");
+    assert_eq!(completion.model, "openai/gpt-5.6");
     assert_eq!(
         completion.choices[0].message.content.as_deref(),
         Some("Hello there!")
@@ -51,7 +51,7 @@ async fn openai_happy_path() {
     let sent: serde_json::Value =
         serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
     // The provider prefix must be stripped from the outbound model.
-    assert_eq!(sent["model"], "gpt-4o");
+    assert_eq!(sent["model"], "gpt-5.6");
     assert_eq!(sent["messages"][0]["content"], "hi");
     assert!(sent.get("stream").is_none());
 }
@@ -66,7 +66,7 @@ async fn unknown_request_fields_are_forwarded() {
         .mount(&server)
         .await;
 
-    let mut req = request("openai/gpt-4o");
+    let mut req = request("openai/gpt-5.6");
     // Vendor extensions pass through verbatim...
     req.unknown_fields.insert("vendor_beta".into(), json!(40));
     req.unknown_fields.insert("seed".into(), json!(7));
@@ -99,7 +99,7 @@ async fn with_api_key_overrides_the_clients_key() {
     // client_for holds "sk-test-openai"; the override must win.
     client_for(&server)
         .with_api_key("sk-override")
-        .chat_completion(request("openai/gpt-4o"))
+        .chat_completion(request("openai/gpt-5.6"))
         .await
         .unwrap();
 }
@@ -120,7 +120,7 @@ async fn openai_error_statuses_map_to_provider_error() {
             .await;
 
         let err = client_for(&server)
-            .chat_completion(request("openai/gpt-4o"))
+            .chat_completion(request("openai/gpt-5.6"))
             .await
             .unwrap_err();
 
@@ -150,7 +150,7 @@ async fn malformed_success_body_maps_to_decode_error() {
         .await;
 
     let err = client_for(&server)
-        .chat_completion(request("openai/gpt-4o"))
+        .chat_completion(request("openai/gpt-5.6"))
         .await
         .unwrap_err();
     assert!(
@@ -174,7 +174,7 @@ async fn unparseable_error_body_falls_back_to_raw_text() {
         .await;
 
     let err = client_for(&server)
-        .chat_completion(request("openai/gpt-4o"))
+        .chat_completion(request("openai/gpt-5.6"))
         .await
         .unwrap_err();
     match err {
@@ -197,7 +197,7 @@ async fn stream_true_is_rejected_before_any_request() {
     let server = MockServer::start().await;
     // No mock mounted: a request reaching the server would 404 into a
     // Provider error, so getting NotImplemented proves we rejected early.
-    let mut req = request("openai/gpt-4o");
+    let mut req = request("openai/gpt-5.6");
     req.stream = Some(true);
 
     let err = client_for(&server).chat_completion(req).await.unwrap_err();
@@ -236,7 +236,7 @@ async fn response_unknowns_and_tool_calls_round_trip_to_caller() {
         .await;
 
     let completion = client_for(&server)
-        .chat_completion(request("openai/gpt-4o"))
+        .chat_completion(request("openai/gpt-5.6"))
         .await
         .unwrap();
 
@@ -245,7 +245,7 @@ async fn response_unknowns_and_tool_calls_round_trip_to_caller() {
     // explicit `"logprobs": null` is dropped by the wire types themselves
     // (Option + skip_serializing_if, predating normalization).
     let mut expected = body;
-    expected["model"] = json!("openai/gpt-4o");
+    expected["model"] = json!("openai/gpt-5.6");
     expected["choices"][0]
         .as_object_mut()
         .unwrap()
@@ -258,9 +258,12 @@ async fn invalid_model_strings_are_rejected() {
     let server = MockServer::start().await;
     let client = client_for(&server);
 
-    let err = client.chat_completion(request("gpt-4o")).await.unwrap_err();
+    let err = client
+        .chat_completion(request("gpt-5.6"))
+        .await
+        .unwrap_err();
     assert!(
-        err.to_string().contains("not a supported provider"),
+        err.to_string().contains("no registered model spec"),
         "{err}"
     );
 
@@ -269,7 +272,7 @@ async fn invalid_model_strings_are_rejected() {
         .await
         .unwrap_err();
     assert!(
-        err.to_string().contains("not a supported provider"),
+        err.to_string().contains("no registered model spec"),
         "{err}"
     );
 }

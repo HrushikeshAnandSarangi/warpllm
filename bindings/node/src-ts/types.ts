@@ -10,7 +10,7 @@ export interface ChatMessage {
 }
 
 export interface ChatCompletionCreateParams {
-  /** `provider/model`, e.g. `"openai/gpt-4o"`. */
+  /** `provider/model`, e.g. `"openai/gpt-5.6"`. */
   model: string
   messages: ChatMessage[]
   temperature?: number

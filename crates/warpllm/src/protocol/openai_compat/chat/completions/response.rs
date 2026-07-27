@@ -442,7 +442,7 @@ mod tests {
                 "new_choice_field": true
             }],
             "created": 1_700_000_000,
-            "model": "gpt-4o-2024-08-06",
+            "model": "gpt-5.6-2024-08-06",
             "object": "chat.completion",
             "moderation": {
                 "input": {
@@ -494,7 +494,7 @@ mod tests {
 
         // Spot-check the typed views the IR exposes along the way.
         assert_eq!(normalized.id, "chatcmpl-123");
-        assert_eq!(normalized.model, "gpt-4o-2024-08-06");
+        assert_eq!(normalized.model, "gpt-5.6-2024-08-06");
         assert_eq!(normalized.created, Some(1_700_000_000));
         let completion = &normalized.completions[0];
         assert_eq!(completion.finish_reason, FinishReason::ToolCalls);
@@ -565,7 +565,7 @@ mod tests {
                 }
             }],
             "created": 1_700_000_000,
-            "model": "gpt-4o",
+            "model": "gpt-5.6",
             "object": "chat.completion"
         });
         let normalized = ingest_response(parse(body.clone()));
@@ -596,7 +596,7 @@ mod tests {
                 "message": {"content": "hi", "refusal": null, "role": "assistant"}
             }],
             "created": 1_700_000_000,
-            "model": "gpt-4o",
+            "model": "gpt-5.6",
             "object": "chat.completion",
             "usage": {
                 "completion_tokens": 1,

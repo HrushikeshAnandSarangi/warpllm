@@ -6,7 +6,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Env mutation is process-global, so these scenarios run inside one test
 /// body (temp-env serializes the unsafe set/unset around the closure).
 #[test]
-fn env_key_with_api_key_override_and_missing_key() {
+fn env_api_key_with_override_and_missing_key() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
     temp_env::with_var("OPENAI_API_KEY", Some("sk-from-env"), || {
@@ -25,7 +25,7 @@ fn env_key_with_api_key_override_and_missing_key() {
             })
             .unwrap();
             client
-                .chat_completion(request("openai/gpt-4o"))
+                .chat_completion(request("openai/gpt-5.6"))
                 .await
                 .unwrap();
 
@@ -44,7 +44,7 @@ fn env_key_with_api_key_override_and_missing_key() {
             .unwrap()
             .with_api_key("sk-explicit");
             client
-                .chat_completion(request("openai/gpt-4o"))
+                .chat_completion(request("openai/gpt-5.6"))
                 .await
                 .unwrap();
         });
@@ -55,13 +55,13 @@ fn env_key_with_api_key_override_and_missing_key() {
             // 3. Missing key errors at request time, naming the env var.
             let client = Client::new(ClientConfig::default()).unwrap();
             let err = client
-                .chat_completion(request("openai/gpt-4o"))
+                .chat_completion(request("openai/gpt-5.6"))
                 .await
                 .unwrap_err();
             match err {
                 Error::MissingApiKey { provider, env_var } => {
                     assert_eq!(provider, "openai");
-                    assert_eq!(env_var, "OPENAI_API_KEY");
+                    assert_eq!(env_var, Some("OPENAI_API_KEY"));
                 }
                 other => panic!("expected MissingApiKey, got {other:?}"),
             }

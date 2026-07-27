@@ -48,7 +48,7 @@ fn deepseek_key_resolves_per_provider() {
                 match err {
                     Error::MissingApiKey { provider, env_var } => {
                         assert_eq!(provider, "deepseek");
-                        assert_eq!(env_var, "DEEPSEEK_API_KEY");
+                        assert_eq!(env_var, Some("DEEPSEEK_API_KEY"));
                     }
                     other => panic!("expected MissingApiKey, got {other:?}"),
                 }

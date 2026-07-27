@@ -172,7 +172,7 @@ mod tests {
 
     fn full_wire_request() -> CreateChatCompletionRequest {
         let mut request = CreateChatCompletionRequest {
-            model: "openai/gpt-4o".into(),
+            model: "openai/gpt-5.6".into(),
             messages: vec![
                 ChatCompletionRequestMessage {
                     role: "developer".into(),
@@ -213,10 +213,10 @@ mod tests {
     #[test]
     fn openai_compat_round_trip_is_lossless() {
         let original = full_wire_request();
-        let normalized = ingest_request(original.clone(), "gpt-4o");
+        let normalized = ingest_request(original.clone(), "gpt-5.6");
         let wire = render_request(&normalized, "openai").unwrap();
 
-        assert_eq!(wire.model, "gpt-4o");
+        assert_eq!(wire.model, "gpt-5.6");
         assert_eq!(wire.messages.len(), 2);
         // The unrecognized "developer" role survives verbatim.
         assert_eq!(wire.messages[0].role, "developer");
@@ -240,15 +240,15 @@ mod tests {
         // Whole-value check so a future typed field can't slip past the
         // per-field assertions above.
         let mut expected = serde_json::to_value(&original).unwrap();
-        expected["model"] = json!("gpt-4o");
+        expected["model"] = json!("gpt-5.6");
         expected.as_object_mut().unwrap().remove("stream");
         assert_eq!(serde_json::to_value(&wire).unwrap(), expected);
     }
 
     #[test]
     fn ingest_maps_typed_params_and_strips_prefix() {
-        let normalized = ingest_request(full_wire_request(), "gpt-4o");
-        assert_eq!(normalized.model, "gpt-4o");
+        let normalized = ingest_request(full_wire_request(), "gpt-5.6");
+        assert_eq!(normalized.model, "gpt-5.6");
         assert_eq!(normalized.params.temperature, Some(0.7));
         assert_eq!(normalized.params.max_tokens, Some(256));
         assert_eq!(normalized.params.top_p, Some(0.9));
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn ingest_keeps_passthrough_fields_in_the_dialect_namespace() {
-        let normalized = ingest_request(full_wire_request(), "gpt-4o");
+        let normalized = ingest_request(full_wire_request(), "gpt-5.6");
         // Every field without a typed wire home rides ext verbatim.
         assert_eq!(normalized.ext["openai_compat"]["top_k"], json!(40));
         assert_eq!(normalized.ext["openai_compat"]["seed"], json!(1234));
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn ingest_populates_source() {
         let original = full_wire_request();
-        let normalized = ingest_request(original.clone(), "gpt-4o");
+        let normalized = ingest_request(original.clone(), "gpt-5.6");
         let source = normalized.source.as_ref().unwrap();
         assert_eq!(source.dialect, Dialect::OpenAiCompat);
         assert_eq!(source.body, serde_json::to_value(&original).unwrap());
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn render_rejects_staged_features() {
-        let mut normalized = ingest_request(full_wire_request(), "gpt-4o");
+        let mut normalized = ingest_request(full_wire_request(), "gpt-5.6");
         normalized.tools.push(normalized::ToolDef {
             name: "search".into(),
             description: None,
@@ -341,7 +341,7 @@ mod tests {
         let mut wire_request = full_wire_request();
         wire_request.stop = None;
         wire_request.stream = Some(false);
-        let normalized = ingest_request(wire_request, "gpt-4o");
+        let normalized = ingest_request(wire_request, "gpt-5.6");
         let wire = render_request(&normalized, "openai").unwrap();
         assert_eq!(wire.stop, None);
         assert_eq!(wire.stream, None);

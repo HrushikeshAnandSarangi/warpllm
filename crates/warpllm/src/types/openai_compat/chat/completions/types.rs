@@ -327,7 +327,7 @@ pub struct ChatCompletionModerationError {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreateChatCompletionRequest {
-    /// Model string in `provider/model` form, e.g. `"openai/gpt-4o"`.
+    /// Model string in `provider/model` form, e.g. `"openai/gpt-5.6"`.
     pub model: String,
     pub messages: Vec<ChatCompletionRequestMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -371,7 +371,7 @@ mod tests {
                     "message": {"content": "hi", "refusal": null, "role": "assistant"}
                 }],
                 "created": 1700000000,
-                "model": "gpt-4o",
+                "model": "gpt-5.6",
                 "object": "chat.completion"
             }"#,
         )
@@ -408,7 +408,7 @@ mod tests {
                 "new_choice_field": true
             }],
             "created": 1700000000,
-            "model": "gpt-4o",
+            "model": "gpt-5.6",
             "object": "chat.completion",
             "usage": {
                 "completion_tokens": 1,
@@ -491,7 +491,7 @@ mod tests {
                 }
             }],
             "created": 1_700_000_000,
-            "model": "gpt-4o",
+            "model": "gpt-5.6",
             "object": "chat.completion",
             "moderation": {
                 "input": {
@@ -573,7 +573,7 @@ mod tests {
     #[test]
     fn unknown_field_order_is_preserved() {
         let mut request = CreateChatCompletionRequest {
-            model: "openai/gpt-4o".into(),
+            model: "openai/gpt-5.6".into(),
             ..Default::default()
         };
         request

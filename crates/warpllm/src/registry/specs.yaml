@@ -1,0 +1,144 @@
+# warpllm's model registry.
+#
+# THIS FILE IS THE ROSTER. Adding a provider or a model is an edit here and
+# nowhere else: `mod.rs` next door compiles it into the binary with
+# `include_str!` and resolves it once, on the first lookup.
+#
+# Two gates catch a bad edit, and `cargo test -p warpllm` is where both bite,
+# so run it before you open a PR. Anything that leaves no usable spec — a
+# syntax error, an unknown field, a malformed key, a missing required field —
+# fails to LOAD. Everything else about a good roster, listed below as a rule,
+# is a lint. Neither can reach a release: CI runs the suite on every PR.
+#
+# Keys are model_str paths
+# ------------------------
+# A key is the string a caller routes with, read like a filepath. A key
+# ending in `/` is a NAMESPACE: never routable on its own, it exists to hold
+# the fields its descendants share. Any other key is routable.
+#
+#   openai/                        namespace: everything OpenAI shares
+#   openai/gpt-5.6                 routable: one model
+#   openai/*                       routable: every OTHER name under openai/
+#   exampleprovider/v1/            namespace: nested grouping
+#   exampleprovider/v1/model-abc   routable, inherits both namespaces above
+#   exampleprovider/v1/*           routable: every other name under v1/
+#
+# KEEP `specs:` IN ASCENDING KEY ORDER. The tests fail otherwise. Byte order
+# puts a namespace immediately above the models that inherit from it, so a
+# new entry has exactly one place it can go and two PRs adding different
+# providers do not collide.
+#
+# Inheritance
+# -----------
+# Resolving a key merges every ancestor namespace into it, least specific
+# first, field by field. An entry restates ONLY what differs — a model that
+# sets nothing but `capabilities.max_concurrent_requests` keeps its
+# namespace's `supported_endpoints`. An entry with no differences at all is
+# `{}`: it exists to make that model routable.
+#
+# Lists REPLACE, they never append. A model that names `supported_endpoints`
+# gets exactly that list and no more, which is the only way to say "this
+# model serves fewer endpoints than the rest of its namespace".
+#
+# Unlisted models, and the `*` that serves them
+# ---------------------------------------------
+# By default a model with no entry is an error, NOT a silent fallback — a typo
+# must not reach a provider as a live request. Every name warpllm routes to is
+# listed here, so what this file says is routable is exactly what is.
+#
+# A namespace can opt out of that by declaring a `*` entry, which serves every
+# name directly under it that no exact key claims. The most specific match
+# wins, always:
+#
+#   specs:
+#     openai/                keys ->  openai/gpt-5.6     openai/gpt-9
+#     openai/gpt-5.6         ------   ---------------     ------------
+#     openai/*               matches  the exact entry     openai/*
+#
+# Read `*` as a single path segment, never a pattern. It matches ONE segment
+# and does not cross a `/`, so `openai/*` serves `openai/gpt-9` but never
+# `openai/org/custom` — that needs its own `openai/org/*`. There is no prefix
+# form: `openai/gpt-*` is rejected, because nothing reads it as a pattern.
+#
+# A `*` entry pins no upstream name. Whatever the caller asked for, minus the
+# provider prefix, is what ships on the wire — which is why `model:` is not
+# allowed on one.
+#
+# UNDERSTAND WHAT A `*` GIVES UP. Under it a typo is routable: `openai/gpt-4oo`
+# becomes a live, billed upstream request that fails at the provider instead of
+# here. Declare one when a provider adds models faster than this file can track
+# them and you accept that trade; list names explicitly everywhere else. The
+# shipped roster below declares none.
+#
+# Fields
+# ------
+# - `model` is the name sent upstream on the wire. Defaults to the key's last
+#   segment, so set it only when warpllm's routing alias differs from the
+#   provider's actual model name. Not allowed on a namespace.
+# - `base_url` includes any version prefix (e.g. `/v1`) and carries no
+#   trailing slash: endpoints append their own path (`/chat/completions`).
+# - `env_api_key` names the environment variable warpllm reads the API key from
+#   BY DEFAULT. It is not the only source and not a secret store: an explicit
+#   key already wins over it (`Client::with_api_key`, which gateways call per
+#   request to forward a caller's own token), and client configuration will
+#   be able to override it per provider. Two providers may not share one —
+#   the tests reject it, because a shared variable silently authenticates one
+#   provider with the other's credentials.
+#
+#   OPTIONAL, and the only transport field that is. Omit it entirely for a
+#   model whose key is per-caller rather than per-deployment: such a model
+#   authenticates only with an explicitly supplied key, and asking for one it
+#   has not got says so instead of naming a variable nothing reads. Omitting it
+#   on a model UNDER a namespace that names one inherits that one as usual, so
+#   opting out means declaring it nowhere in the chain. An empty string is
+#   rejected — that is a half-finished edit, not an opt-out.
+# - `protocol` names the wire format spoken. One of: openai_compat.
+# - `capabilities.supported_endpoints` may name only endpoints the entry's
+#   protocol defines; the tests reject the rest, so a typo fails in CI
+#   instead of 404-ing against a live provider.
+# - Omit a capability you have not verified. Undocumented is NOT unlimited,
+#   so leaving a limit off is the honest answer, never a guess. An omitted
+#   key and an explicit `null` both mean "inherit".
+# - Cite your source. Every value below traces to a public spec — don't
+#   invent per-model data, and split a model out only once a real,
+#   documented difference is confirmed.
+
+specs:
+  # <https://api-docs.deepseek.com/api/create-chat-completion> (checked
+  # 2026-07-24).
+  deepseek/:
+    base_url: "https://api.deepseek.com"
+    env_api_key: DEEPSEEK_API_KEY
+    protocol: openai_compat
+    capabilities:
+      supported_endpoints:
+        - /chat/completions
+
+  # The V4 pair; the legacy `deepseek-chat` / `deepseek-reasoner` names were
+  # discontinued 2026-07-24 and map to V4-Flash modes. The pair diverges on
+  # exactly one field: Flash serves 5x what Pro does.
+  deepseek/deepseek-v4-flash:
+    capabilities:
+      max_concurrent_requests: 2500
+  deepseek/deepseek-v4-pro:
+    capabilities:
+      max_concurrent_requests: 500
+
+  # <https://platform.openai.com/docs/api-reference>. Endpoint entries grow
+  # as warpllm implements them.
+  openai/:
+    base_url: "https://api.openai.com/v1"
+    env_api_key: OPENAI_API_KEY
+    protocol: openai_compat
+    capabilities:
+      supported_endpoints:
+        - /chat/completions
+        - /responses
+
+  # The GPT-5.6 family. No documented divergence from the namespace above is
+  # recorded yet: these entries exist to make the four names routable. Add
+  # token limits and concurrency here once the published numbers are in hand.
+  openai/gpt-5.6: {}
+  openai/gpt-5.6-luna: {}
+  openai/gpt-5.6-sol: {}
+  openai/gpt-5.6-terra: {}

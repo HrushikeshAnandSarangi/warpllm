@@ -66,7 +66,7 @@ FULL_BODY = {
         }
     ],
     "created": 1_700_000_000,
-    "model": "gpt-4o",
+    "model": "gpt-5.6",
     "object": "chat.completion",
     "moderation": {
         "input": {
@@ -154,7 +154,7 @@ def test_minimal_body_hydrates_with_absent_optionals():
                 }
             ],
             "created": 1_700_000_000,
-            "model": "gpt-4o",
+            "model": "gpt-5.6",
             "object": "chat.completion",
         }
     )

@@ -20,13 +20,13 @@ def test_sync_openai_happy_path(
     ).respond_with_json(openai_completion_body)
 
     completion = client.chat.completions.create(
-        model="openai/gpt-4o", messages=MESSAGES
+        model="openai/gpt-5.6", messages=MESSAGES
     )
 
     assert isinstance(completion, ChatCompletion)
     assert completion.choices[0].message.content == "Hello there!"
     assert completion.choices[0].finish_reason == "stop"
-    assert completion.model == "openai/gpt-4o"
+    assert completion.model == "openai/gpt-5.6"
     assert completion.usage.total_tokens == 21
     assert completion.service_tier == "default"
     assert completion.system_fingerprint == "fp_44709d6fcb"
@@ -35,7 +35,7 @@ def test_sync_openai_happy_path(
     assert completion.usage.completion_tokens_details.reasoning_tokens == 5
 
     sent = httpserver.log[0][0].get_json()
-    assert sent["model"] == "gpt-4o"  # provider prefix stripped outbound
+    assert sent["model"] == "gpt-5.6"  # provider prefix stripped outbound
     assert sent["messages"] == MESSAGES
 
 
@@ -49,11 +49,11 @@ async def test_async_openai_happy_path(
     ).respond_with_json(openai_completion_body)
 
     completion = await async_client.chat.completions.create(
-        model="openai/gpt-4o", messages=MESSAGES
+        model="openai/gpt-5.6", messages=MESSAGES
     )
 
     assert completion.choices[0].message.content == "Hello there!"
-    assert completion.model == "openai/gpt-4o"
+    assert completion.model == "openai/gpt-5.6"
     assert completion.usage.total_tokens == 21
 
 
@@ -72,7 +72,7 @@ def test_401_raises_authentication_error(
 
     with pytest.raises(AuthenticationError) as exc_info:
         client.chat.completions.create(
-            model="openai/gpt-4o", messages=MESSAGES
+            model="openai/gpt-5.6", messages=MESSAGES
         )
     assert exc_info.value.status_code == 401
     assert exc_info.value.provider == "openai"
@@ -80,15 +80,15 @@ def test_401_raises_authentication_error(
 
 
 def test_unknown_provider_rejected(client: WarpLLM):
-    with pytest.raises(InvalidRequestError, match="not a supported provider"):
+    with pytest.raises(InvalidRequestError, match="no registered model spec"):
         client.chat.completions.create(
             model="mistral/large", messages=MESSAGES
         )
 
 
 def test_bare_model_rejected(client: WarpLLM):
-    with pytest.raises(InvalidRequestError, match="not a supported provider"):
-        client.chat.completions.create(model="gpt-4o", messages=MESSAGES)
+    with pytest.raises(InvalidRequestError, match="no registered model spec"):
+        client.chat.completions.create(model="gpt-5.6", messages=MESSAGES)
 
 
 def test_missing_key_names_env_var(monkeypatch):
@@ -96,12 +96,12 @@ def test_missing_key_names_env_var(monkeypatch):
     client = WarpLLM()
     with pytest.raises(AuthenticationError, match="OPENAI_API_KEY"):
         client.chat.completions.create(
-            model="openai/gpt-4o", messages=MESSAGES
+            model="openai/gpt-5.6", messages=MESSAGES
         )
 
 
 def test_stream_raises_not_implemented(client: WarpLLM):
     with pytest.raises(NotImplementedError, match="streaming"):
         client.chat.completions.create(
-            model="openai/gpt-4o", messages=MESSAGES, stream=True
+            model="openai/gpt-5.6", messages=MESSAGES, stream=True
         )

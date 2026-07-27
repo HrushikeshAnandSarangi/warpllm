@@ -29,7 +29,7 @@ def openai_completion_body() -> dict:
         "id": "chatcmpl-123",
         "object": "chat.completion",
         "created": 1_700_000_000,
-        "model": "gpt-4o-2024-08-06",
+        "model": "gpt-5.6-2024-08-06",
         "choices": [
             {
                 "index": 0,

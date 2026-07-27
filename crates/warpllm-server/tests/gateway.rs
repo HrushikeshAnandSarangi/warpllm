@@ -31,7 +31,7 @@ async fn spawn_app(upstream_uri: &str) -> String {
 
 fn request_body() -> Value {
     json!({
-        "model": "openai/gpt-4o",
+        "model": "openai/gpt-5.6",
         "messages": [{"role": "user", "content": "hi"}]
     })
 }
@@ -41,7 +41,7 @@ fn completion_body() -> Value {
         "id": "chatcmpl-123",
         "object": "chat.completion",
         "created": 1_700_000_000,
-        "model": "gpt-4o-2024-08-06",
+        "model": "gpt-5.6-2024-08-06",
         "choices": [{
             "index": 0,
             "message": {"role": "assistant", "content": "Hello there!", "refusal": null},
@@ -72,12 +72,12 @@ async fn non_stream_happy_path_uses_gateway_key_and_echoes_model() {
         .unwrap();
     assert_eq!(response.status(), 200);
     let body: Value = response.json().await.unwrap();
-    assert_eq!(body["model"], "openai/gpt-4o");
+    assert_eq!(body["model"], "openai/gpt-5.6");
     assert_eq!(body["choices"][0]["message"]["content"], "Hello there!");
 
     let sent: Value =
         serde_json::from_slice(&upstream.received_requests().await.unwrap()[0].body).unwrap();
-    assert_eq!(sent["model"], "gpt-4o");
+    assert_eq!(sent["model"], "gpt-5.6");
 }
 
 #[tokio::test]
@@ -171,7 +171,7 @@ async fn invalid_model_and_invalid_json_are_400s() {
 
     let response = client
         .post(format!("{gateway}/v1/chat/completions"))
-        .json(&json!({"model": "gpt-4o", "messages": []}))
+        .json(&json!({"model": "gpt-5.6", "messages": []}))
         .send()
         .await
         .unwrap();
@@ -182,7 +182,7 @@ async fn invalid_model_and_invalid_json_are_400s() {
         body["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("not a supported provider")
+            .contains("no registered model spec")
     );
 
     let response = client
