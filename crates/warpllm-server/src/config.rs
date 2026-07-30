@@ -3,8 +3,10 @@
 use clap::Parser;
 use warpllm::ClientConfig;
 
-/// An OpenAI-compatible gateway: point any OpenAI SDK's base URL at it and
-/// pass your provider API key as the bearer token.
+/// An OpenAI-compatible gateway: point any OpenAI SDK's base URL at it. The
+/// gateway authenticates upstream with its own provider keys from the
+/// environment, so the SDK's own key is ignored — pass any placeholder to
+/// satisfy clients that insist on one.
 #[derive(Debug, Parser)]
 #[command(name = "warpllm", version)]
 pub struct ServerConfig {
@@ -40,9 +42,9 @@ pub fn parse_cli(args: impl Iterator<Item = String>) -> Result<Cli, String> {
 }
 
 impl ServerConfig {
-    /// Auth is passthrough (each caller's bearer becomes the upstream key,
-    /// with the gateway's own `OPENAI_API_KEY` env as the client fallback)
-    /// and `base_url` stays absent so every provider talks to its own API.
+    /// No key is set here: the client resolves one per request from the routed
+    /// provider's env var (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, …), and
+    /// `base_url` stays absent so every provider talks to its own API.
     pub fn client_config(&self) -> ClientConfig {
         ClientConfig {
             base_url: None,

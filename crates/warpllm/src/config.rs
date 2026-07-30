@@ -5,9 +5,12 @@ use serde::Deserialize;
 /// Matches the OpenAI SDK's default request timeout.
 pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
-/// Deliberately holds no API key: the client reads each provider's env var
-/// (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, …) at request time, and gateways
-/// forward each caller's bearer via [`crate::Client::with_api_key`].
+/// Holds no API key today. Credentials resolve at request time, once routing
+/// has picked a model and its spec names the variable to read — so a client is
+/// never asked up front for keys a given request will not use. An embedder
+/// keeping keys outside the environment supplies one via
+/// [`crate::Client::with_api_key`]; carrying several provider keys at once is
+/// this struct's job as it grows.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientConfig {

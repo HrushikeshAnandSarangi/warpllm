@@ -2,8 +2,12 @@
 
 A warp-speed, robust AI gateway written for rust, node, and python applications - built for planet scale by the community.
 
-[![Join Discord](https://img.shields.io/badge/Discord-Join%20the%20warpllm%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/tSSQTxFnsC)
+[![Discord](https://img.shields.io/badge/Discord-warpllm-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/tSSQTxFnsC)
 [![Reddit](https://img.shields.io/badge/Reddit-r%2Fwarpllm-FF4500?style=for-the-badge&logo=reddit&logoColor=white)](https://www.reddit.com/r/warpllm/)
+
+[![crates.io](https://img.shields.io/crates/v/warpllm?logo=rust&label=crates.io)](https://crates.io/crates/warpllm)
+[![PyPI](https://img.shields.io/pypi/v/warpllm?logo=pypi&logoColor=white&label=PyPI)](https://pypi.org/project/warpllm/)
+[![npm](https://img.shields.io/npm/v/%40warpllm%2Fwarpllm?logo=npm&label=npm)](https://www.npmjs.com/package/@warpllm/warpllm)
 
 ## Mission
 
@@ -16,6 +20,35 @@ This project is to lay out the most resilient open source productionization laye
 1.  Control over:
     1.  Where your data goes.
     1.  Your AI budget across providers.
+
+## Status
+
+> [!IMPORTANT]
+> The published packages are **0.1.4**, an early SDK that serves OpenAI chat
+> completions only. Several larger pieces — the provider registry and DeepSeek,
+> the normalized request pipeline, and the OpenAI-compatible HTTP gateway —
+> have landed on `main` but are **not released yet**. Usage docs land with the
+> version that ships them.
+
+Install the published SDK:
+
+```bash
+cargo add warpllm                # rust
+pip install warpllm              # python
+npm install @warpllm/warpllm     # node
+```
+
+| | Released (0.1.4) | On `main` |
+| --- | --- | --- |
+| OpenAI chat completions, non-streaming | Yes | Yes |
+| `provider/model` routing strings | OpenAI only | Provider registry |
+| DeepSeek | — | Unreleased |
+| OpenAI-compatible HTTP gateway | — | Unreleased |
+| Streaming | — | — |
+| Failover, load balancing, caching, metrics | — | — |
+
+Unlisted models are rejected rather than guessed at, so routing a name warpllm
+doesn't know is an error, not a surprise upstream bill.
 
 ## Community
 
@@ -31,10 +64,22 @@ I'm setting up this up! We're excited to have you join us in building this out t
 1.  **Star this repo**: We appreciate visibility on the project.
 1.  **Share your thoughts online**: Post in our discord or reddit community! Your opinion can help others, and we're always listening.
 
+Adding an OpenAI-compatible provider is usually one entry in
+`crates/warpllm/src/registry/specs.yaml` — the file documents its own rules.
+CI runs all of these on every pull request, and you can run each locally:
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cd bindings/python && uv sync --locked && uv run pytest
+cd bindings/node && npm ci && npx napi build --platform && npm test
+```
+
 ## Layers
 
 1.  **An SDK** - provide a request and we translate it to work with different providers and models out of box.
-1.  [Coming Soon] **A proxy** - run a self-hosted proxy that allows you to load balance, failover, etc:
+1.  [Unreleased] **A proxy** - run a self-hosted proxy that speaks the OpenAI API:
     1.  [Coming Soon] **Failover** - define multiple models to handle outages / errors
     1.  [Coming Soon] **Load Balancing** - define a % of requests to be handled per model
     1.  [Coming Soon] **Prompt Response Caching** - define a TTL and avoid paying twice for the same prompt
@@ -48,11 +93,7 @@ I'm setting up this up! We're excited to have you join us in building this out t
 
 ## Roadmap
 
-[Coming Soon] This is in our Github issues. Add a comment if you see something missing or want to prioritize something important to you.
-
-## Quickstart
-
-In progress.
+The roadmap lives in [GitHub issues](https://github.com/warpllm/warpllm/issues) — one issue per item, so direction is discussed where the work happens. Add a comment if you see something missing, or if something there matters enough to you that it should move up.
 
 ## License
 

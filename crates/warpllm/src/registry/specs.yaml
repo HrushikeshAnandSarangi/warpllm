@@ -79,9 +79,8 @@
 #   trailing slash: endpoints append their own path (`/chat/completions`).
 # - `env_api_key` names the environment variable warpllm reads the API key from
 #   BY DEFAULT. It is not the only source and not a secret store: an explicit
-#   key already wins over it (`Client::with_api_key`, which gateways call per
-#   request to forward a caller's own token), and client configuration will
-#   be able to override it per provider. Two providers may not share one —
+#   key already wins over it (`Client::with_api_key`), and client configuration
+#   will be able to override it per provider. Two providers may not share one —
 #   the tests reject it, because a shared variable silently authenticates one
 #   provider with the other's credentials.
 #

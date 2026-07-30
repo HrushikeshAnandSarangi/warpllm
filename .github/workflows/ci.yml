@@ -1,0 +1,102 @@
+# The gate every ordinary change passes through.
+#
+# The three release workflows fire only on vX.Y.Z tags and workflow_dispatch,
+# and none of them run the Python or Node suites at all — they build wheels and
+# binaries and publish. Without this file a pull request could merge with
+# broken formatting, Clippy findings, or failing binding tests, and nothing
+# would notice until release day.
+#
+# Actions are pinned to the same commits the release workflows already trust.
+# The one new dependency is uv, pinned to an exact version in the Python job.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to a PR supersedes the run already in flight. main is never
+# cancelled: every commit on the default branch keeps a status of its own.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all --check
+      # --all-targets lints tests and examples too, not just the libraries.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # --workspace, not -p warpllm as release-crate.yml runs: this is the only
+      # place warpllm-server's gateway tests and both binding crates get built.
+      - name: Test
+        run: cargo test --workspace
+
+  python:
+    name: Python bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      # uv builds the extension module from source, so it needs a toolchain.
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          # pyproject's requires-python floor: test the oldest version claimed.
+          python-version: "3.10"
+      # Pinned, not `--upgrade`: a floating uv is an unreviewed dependency on
+      # every run, and reproducibility is the whole point of --locked below.
+      - name: Install uv
+        run: python -m pip install uv==0.9.13
+      # --locked fails rather than silently resolving past a stale uv.lock.
+      - name: Sync the locked environment
+        working-directory: bindings/python
+        run: uv sync --locked
+      - name: Test
+        working-directory: bindings/python
+        run: uv run pytest
+
+  node:
+    name: Node bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      # napi compiles the cdylib before the suite can load it.
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install
+        working-directory: bindings/node
+        run: npm ci
+      # Debug, not --release: CI checks correctness, and release-npm.yml is
+      # what builds the optimized artifacts that ship.
+      - name: Build the native module
+        working-directory: bindings/node
+        run: ./node_modules/.bin/napi build --platform
+      # build:ts, then typecheck, then vitest.
+      - name: Test
+        working-directory: bindings/node
+        run: npm test

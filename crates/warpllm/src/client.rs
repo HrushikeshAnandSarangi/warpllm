@@ -38,8 +38,11 @@ impl Client {
 
     /// A copy of this client that authenticates with `api_key` instead of
     /// the environment's — for every provider. Cheap — the connection pool
-    /// is shared — so gateways call it per request to forward each caller's
-    /// bearer token upstream.
+    /// is shared — so an embedder holding keys somewhere other than the
+    /// environment can call it per request.
+    ///
+    /// warpllm's own gateway does not: it holds the provider keys itself and
+    /// ignores the caller's `Authorization` header entirely.
     #[must_use]
     pub fn with_api_key(&self, api_key: impl Into<String>) -> Self {
         Self {
