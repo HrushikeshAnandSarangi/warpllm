@@ -14,4 +14,4 @@
 pub(crate) mod openai_compat;
 mod types;
 
-pub use types::Protocol;
+pub use types::{Api, Protocol};

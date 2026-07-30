@@ -28,25 +28,57 @@ pub enum Protocol {
 }
 
 impl Protocol {
-    /// The endpoint paths this wire format defines.
+    /// The APIs this wire format defines.
     ///
-    /// A registry entry naming anything else is a typo or a protocol
-    /// mismatch, which is what `registry::lint` reads this for. Widening a
-    /// protocol's surface is an edit here, beside the module that implements
-    /// it — not in the roster.
+    /// A registry entry naming an API its protocol does not serve is a
+    /// protocol mismatch, which is what `registry::lint` reads this for.
+    /// Widening a protocol's surface is an edit here, beside the module that
+    /// implements it — not in the roster.
+    ///
+    /// While `OpenAiCompat` is the only protocol and serves every [`Api`],
+    /// that lint cannot fail; it earns its keep the moment a protocol lands
+    /// that serves a subset, which is why it is written now rather than
+    /// retrofitted then.
     ///
     /// `cfg(test)` because that lint is its only reader, and the lint itself
     /// is test-only. Nothing on a request path consults this: a spec carries
-    /// its OWN endpoint list, already checked against this one.
+    /// its OWN api list, already checked against this one.
     #[cfg(test)]
-    pub(crate) fn endpoints(self) -> &'static [&'static str] {
+    pub(crate) fn apis(self) -> &'static [Api] {
         match self {
             Protocol::OpenAiCompat => &[
-                "/chat/completions",
-                "/embeddings",
-                "/moderations",
-                "/responses",
+                Api::ChatCompletions,
+                Api::ChatCompletionsStream,
+                Api::Responses,
             ],
         }
     }
+}
+
+/// One API surface a model can serve, as named in a registry entry's
+/// `capabilities.supported_apis`.
+///
+/// A capability, not a URL: two protocols can serve the same API at different
+/// paths, so the path belongs to the protocol module that implements it. Being
+/// an enum is what makes a misspelling fail to LOAD rather than 404 against a
+/// live provider at request time.
+///
+/// `non_exhaustive` for the same reason as [`Protocol`]: this exists to grow
+/// as warpllm implements more of each provider's surface, and without it every
+/// downstream `match` would break on a release that adds one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[non_exhaustive]
+#[serde(rename_all = "snake_case")]
+pub enum Api {
+    /// Chat completions: one request, one whole reply. The only surface
+    /// warpllm serves today.
+    ChatCompletions,
+    /// Chat completions asked to stream, delivering the reply as incremental
+    /// chunks.
+    ///
+    /// Separate from [`Api::ChatCompletions`] because a model can serve one
+    /// without the other, so declaring that one never implies this one.
+    ChatCompletionsStream,
+    /// OpenAI's newer, stateful successor to chat completions.
+    Responses,
 }

@@ -65,7 +65,7 @@ static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
 /// ```
 /// let spec = warpllm::model_spec("openai/gpt-5.6")?;
 /// assert_eq!(spec.provider(), "openai");
-/// assert!(spec.capabilities().supports_endpoint("/chat/completions"));
+/// assert!(spec.capabilities().supports_api(warpllm::Api::ChatCompletions));
 ///
 /// // A name nobody registered, under a namespace with no `*`, is an error.
 /// assert!(warpllm::model_spec("openai/nonexistent").is_err());
@@ -105,7 +105,7 @@ fn resolve<'a>(registry: &'a Registry, model_str: &str) -> Option<&'a ModelSpec>
 mod tests {
     use super::testing::{clean, keys, with};
     use super::*;
-    use crate::protocol::Protocol;
+    use crate::protocol::{Api, Protocol};
 
     // ------------------------------------------------------------- matching
 
@@ -235,8 +235,8 @@ mod tests {
             assert_eq!(spec.base_url(), base.base_url());
             assert_eq!(spec.env_api_key(), base.env_api_key());
             assert_eq!(
-                spec.capabilities().supported_endpoints(),
-                base.capabilities().supported_endpoints()
+                spec.capabilities().supported_apis(),
+                base.capabilities().supported_apis()
             );
         }
     }
@@ -244,14 +244,14 @@ mod tests {
     #[test]
     fn capabilities_resolve_for_the_addressed_model() {
         let openai = model_spec("openai/gpt-5.6").unwrap().capabilities();
-        assert!(openai.supports_endpoint("/chat/completions"));
-        assert!(openai.supports_endpoint("/responses"));
+        assert!(openai.supports_api(Api::ChatCompletions));
+        assert!(openai.supports_api(Api::Responses));
 
         let deepseek = model_spec("deepseek/deepseek-v4-flash")
             .unwrap()
             .capabilities();
-        assert!(deepseek.supports_endpoint("/chat/completions"));
-        assert!(!deepseek.supports_endpoint("/responses"));
+        assert!(deepseek.supports_api(Api::ChatCompletions));
+        assert!(!deepseek.supports_api(Api::Responses));
     }
 
     /// Every registered model resolves to its own entry. Iterates the registry
@@ -280,8 +280,8 @@ mod tests {
         assert_eq!(flash.env_api_key(), pro.env_api_key());
         assert_eq!(flash.protocol(), pro.protocol());
         assert_eq!(
-            flash.capabilities().supported_endpoints(),
-            pro.capabilities().supported_endpoints()
+            flash.capabilities().supported_apis(),
+            pro.capabilities().supported_apis()
         );
         // The divergence that motivated per-model entries: 5x the concurrency.
         assert_eq!(flash.capabilities().max_concurrent_requests(), Some(2500));

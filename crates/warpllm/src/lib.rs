@@ -13,7 +13,7 @@ pub mod types;
 pub use client::Client;
 pub use config::ClientConfig;
 pub use error::{Error, Result};
-pub use protocol::Protocol;
+pub use protocol::{Api, Protocol};
 /// The registry's public face. `registry` itself stays private: it is where
 /// the roster, the resolution, and the lookup live, and none of that is API.
 ///

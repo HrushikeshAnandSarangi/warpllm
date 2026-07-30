@@ -71,8 +71,8 @@ impl ModelSpec {
             ("base_url", self.base_url.is_some()),
             ("protocol", self.protocol.is_some()),
             (
-                "capabilities.supported_endpoints",
-                self.capabilities.supported_endpoints.is_some(),
+                "capabilities.supported_apis",
+                self.capabilities.supported_apis.is_some(),
             ),
         ] {
             if !present {
@@ -87,14 +87,14 @@ impl Capabilities {
     fn apply(&mut self, over: &Capabilities) {
         // Exhaustive for the same reason as `ModelSpec::apply`.
         let Capabilities {
-            supported_endpoints,
+            supported_apis,
             max_input_tokens,
             max_output_tokens,
             max_concurrent_requests,
         } = over;
         // Lists REPLACE rather than extend: a model must be able to serve
-        // FEWER endpoints than its namespace, which appending could never say.
-        overlay(&mut self.supported_endpoints, supported_endpoints);
+        // FEWER APIs than its namespace, which appending could never say.
+        overlay(&mut self.supported_apis, supported_apis);
         overlay(&mut self.max_input_tokens, max_input_tokens);
         overlay(&mut self.max_output_tokens, max_output_tokens);
         overlay(&mut self.max_concurrent_requests, max_concurrent_requests);
@@ -229,7 +229,7 @@ pub(super) fn ancestry(key: &str) -> Vec<&str> {
 mod tests {
     use super::super::testing::{NAMESPACE, NESTED, clean, keys, with};
     use super::*;
-    use crate::protocol::Protocol;
+    use crate::protocol::{Api, Protocol};
 
     // ---------------------------------------------------------- path algebra
 
@@ -304,38 +304,35 @@ mod tests {
         assert_eq!(merged.capabilities.max_input_tokens, Some(128));
     }
 
-    /// Lists REPLACE. A model has to be able to serve FEWER endpoints than
+    /// Lists REPLACE. A model has to be able to serve FEWER APIs than
     /// its namespace, which appending could never express.
     #[test]
-    fn endpoint_lists_replace_rather_than_extend() {
+    fn api_lists_replace_rather_than_extend() {
         let mut merged = ModelSpec {
             capabilities: Capabilities {
-                supported_endpoints: Some(vec![
-                    "/chat/completions".to_string(),
-                    "/responses".to_string(),
-                ]),
+                supported_apis: Some(vec![Api::ChatCompletions, Api::Responses]),
                 ..Capabilities::blank()
             },
             ..ModelSpec::blank()
         };
         merged.apply(&ModelSpec {
             capabilities: Capabilities {
-                supported_endpoints: Some(vec!["/responses".to_string()]),
+                supported_apis: Some(vec![Api::Responses]),
                 ..Capabilities::blank()
             },
             ..ModelSpec::blank()
         });
-        assert_eq!(merged.capabilities.supported_endpoints(), ["/responses"]);
+        assert_eq!(merged.capabilities.supported_apis(), [Api::Responses]);
     }
 
     /// Capabilities merge per field, never wholesale. The shipped V4 pair
     /// depends on it: each restates only `max_concurrent_requests` and keeps
-    /// its namespace's endpoints.
+    /// its namespace's APIs.
     #[test]
     fn capabilities_merge_field_by_field() {
         let mut merged = ModelSpec {
             capabilities: Capabilities {
-                supported_endpoints: Some(vec!["/chat/completions".to_string()]),
+                supported_apis: Some(vec![Api::ChatCompletions]),
                 max_input_tokens: Some(128),
                 ..Capabilities::blank()
             },
@@ -349,7 +346,7 @@ mod tests {
             ..ModelSpec::blank()
         });
         let caps = &merged.capabilities;
-        assert_eq!(caps.supported_endpoints(), ["/chat/completions"]);
+        assert_eq!(caps.supported_apis(), [Api::ChatCompletions]);
         assert_eq!(caps.max_input_tokens, Some(128));
         assert_eq!(caps.max_concurrent_requests, Some(2500));
     }
@@ -386,7 +383,7 @@ mod tests {
             env_api_key: Some("DEMO_API_KEY".into()),
             protocol: Some(Protocol::OpenAiCompat),
             capabilities: Capabilities {
-                supported_endpoints: Some(vec!["/chat/completions".to_string()]),
+                supported_apis: Some(vec![Api::ChatCompletions]),
                 ..Capabilities::blank()
             },
             ..ModelSpec::blank()
@@ -449,7 +446,7 @@ mod tests {
                 },
             ),
             (
-                "capabilities.supported_endpoints",
+                "capabilities.supported_apis",
                 ModelSpec {
                     capabilities: Capabilities::blank(),
                     ..complete()
@@ -484,10 +481,7 @@ mod tests {
         let deep = registry.get("demo/v1/model-abc").unwrap();
         assert_eq!(deep.base_url(), "https://api.demo.test/v1");
         assert_eq!(deep.env_api_key(), Some("DEMO_API_KEY"));
-        assert_eq!(
-            deep.capabilities().supported_endpoints(),
-            ["/chat/completions"]
-        );
+        assert_eq!(deep.capabilities().supported_apis(), [Api::ChatCompletions]);
         assert_eq!(deep.capabilities().max_input_tokens(), Some(128));
         assert_eq!(
             registry
@@ -509,8 +503,8 @@ mod tests {
         assert_eq!(spec.base_url(), "https://api.demo.test/v1");
         assert_eq!(spec.env_api_key(), Some("DEMO_API_KEY"));
         assert_eq!(
-            spec.capabilities().supported_endpoints(),
-            ["/chat/completions", "/responses"]
+            spec.capabilities().supported_apis(),
+            [Api::ChatCompletions, Api::Responses]
         );
         assert_eq!(spec.capabilities().max_concurrent_requests(), Some(2500));
     }
@@ -526,16 +520,16 @@ mod tests {
         assert_eq!(spec.capabilities().max_concurrent_requests(), None);
     }
 
-    /// Lists replace: a model serving fewer endpoints than its namespace is the
+    /// Lists replace: a model serving fewer APIs than its namespace is the
     /// case appending could never express.
     #[test]
-    fn a_models_endpoint_list_replaces_rather_than_extends() {
+    fn a_models_api_list_replaces_rather_than_extends() {
         let registry = clean(&with(
-            "  demo/chat-only:\n    capabilities:\n      supported_endpoints:\n        - /chat/completions\n",
+            "  demo/chat-only:\n    capabilities:\n      supported_apis:\n        - chat_completions\n",
         ));
         let caps = registry.get("demo/chat-only").unwrap().capabilities();
-        assert_eq!(caps.supported_endpoints(), ["/chat/completions"]);
-        assert!(!caps.supports_endpoint("/responses"));
+        assert_eq!(caps.supported_apis(), [Api::ChatCompletions]);
+        assert!(!caps.supports_api(Api::Responses));
     }
 
     /// Three levels: the middle namespace wins over the outer, and the leaf
@@ -634,8 +628,8 @@ mod tests {
         assert_eq!(spec.base_url(), "https://api.demo.test/v1");
         assert_eq!(spec.env_api_key(), Some("DEMO_API_KEY"));
         assert_eq!(
-            spec.capabilities().supported_endpoints(),
-            ["/chat/completions", "/responses"]
+            spec.capabilities().supported_apis(),
+            [Api::ChatCompletions, Api::Responses]
         );
     }
 
@@ -650,10 +644,7 @@ mod tests {
             // Reading these at all is the assertion: each panics if unanswered.
             assert!(!spec.base_url().is_empty(), "`{key}`");
             assert!(spec.env_api_key() != Some(""), "`{key}`");
-            assert!(
-                !spec.capabilities().supported_endpoints().is_empty(),
-                "`{key}`"
-            );
+            assert!(!spec.capabilities().supported_apis().is_empty(), "`{key}`");
             let _ = spec.protocol();
         }
     }
@@ -755,7 +746,7 @@ mod tests {
             .expect("split yields one item");
         let err = load(&format!("{bare}  demo/plain: {{}}\n")).unwrap_err();
         assert!(
-            err.contains("capabilities.supported_endpoints is missing"),
+            err.contains("capabilities.supported_apis is missing"),
             "{err}"
         );
     }

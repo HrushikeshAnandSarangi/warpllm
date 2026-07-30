@@ -8,7 +8,7 @@
 //!
 //! By the time a spec reaches a caller most of that is no longer open.
 //! `finish` in the parent module refuses to produce a spec whose `base_url`,
-//! `protocol`, or `supported_endpoints` is still `None`, so a roster that
+//! `protocol`, or `supported_apis` is still `None`, so a roster that
 //! would produce one fails to load. That is what lets those accessors resolve
 //! without a fallback: read their `Option`s as "not answered YET", never as
 //! "may be absent at runtime".
@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 
-use crate::protocol::Protocol;
+use crate::protocol::{Api, Protocol};
 
 /// Every routable `model_str` -> its spec, already merged along its path, so
 /// nothing at runtime walks a chain.
@@ -59,11 +59,10 @@ impl Registry {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
-    /// Endpoint paths under the provider's `base_url` this model serves,
-    /// e.g. `"/chat/completions"`. A list REPLACES rather than extends the
-    /// one it inherits, which is the only way an entry can say it serves
-    /// FEWER endpoints than its namespace.
-    pub(crate) supported_endpoints: Option<Vec<String>>,
+    /// The API surfaces this model serves, e.g. [`Api::ChatCompletions`]. A
+    /// list REPLACES rather than extends the one it inherits, which is the
+    /// only way an entry can say it serves FEWER APIs than its namespace.
+    pub(crate) supported_apis: Option<Vec<Api>>,
     pub(crate) max_input_tokens: Option<u32>,
     pub(crate) max_output_tokens: Option<u32>,
     /// Requests this model will serve at once. Unset means undocumented,
@@ -77,28 +76,29 @@ impl Capabilities {
     /// entry with no `capabilities:` block deserializes to.
     pub(crate) const fn blank() -> Self {
         Self {
-            supported_endpoints: None,
+            supported_apis: None,
             max_input_tokens: None,
             max_output_tokens: None,
             max_concurrent_requests: None,
         }
     }
 
-    /// Endpoint paths this model serves, relative to [`ModelSpec::base_url`]
-    /// — never empty, since a model that served nothing could not be routed
-    /// to and would fail to load.
-    pub fn supported_endpoints(&self) -> &[String] {
+    /// The API surfaces this model serves — never empty, since a model that
+    /// served nothing could not be routed to and would fail to load.
+    pub fn supported_apis(&self) -> &[Api] {
         required(
-            self.supported_endpoints.as_deref(),
-            "capabilities.supported_endpoints",
+            self.supported_apis.as_deref(),
+            "capabilities.supported_apis",
         )
     }
 
-    /// Whether this model serves `endpoint`, e.g. `"/chat/completions"`.
-    pub fn supports_endpoint(&self, endpoint: &str) -> bool {
-        self.supported_endpoints()
-            .iter()
-            .any(|serves| serves == endpoint)
+    /// Whether this model serves `api`.
+    ///
+    /// Each variant is its own claim: a model declaring
+    /// [`Api::ChatCompletions`] has said nothing about
+    /// [`Api::ChatCompletionsStream`].
+    pub fn supports_api(&self, api: Api) -> bool {
+        self.supported_apis().contains(&api)
     }
 
     /// Largest documented input context, in tokens.

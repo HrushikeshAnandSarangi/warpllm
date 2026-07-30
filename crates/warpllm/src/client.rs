@@ -5,7 +5,7 @@ use std::time::Duration;
 use crate::config::{ClientConfig, DEFAULT_TIMEOUT_SECS};
 use crate::error::{Error, Result};
 use crate::protocol;
-use crate::protocol::Protocol;
+use crate::protocol::{Api, Protocol};
 use crate::registry::{ModelSpec, model_spec};
 use crate::types::openai_compat::chat::completions::{
     CreateChatCompletionRequest, CreateChatCompletionResponse,
@@ -88,9 +88,9 @@ impl Client {
     ) -> Result<CreateChatCompletionResponse> {
         use protocol::openai_compat::chat::completions as endpoint;
 
-        if !spec.capabilities().supports_endpoint("/chat/completions") {
+        if !spec.capabilities().supports_api(Api::ChatCompletions) {
             return Err(Error::InvalidInput(format!(
-                "{}: {} does not serve /chat/completions",
+                "{}: {} does not serve chat completions",
                 spec.provider(),
                 requested_model
             )));
@@ -161,7 +161,7 @@ mod tests {
             env_api_key: Some("DEMO_API_KEY".into()),
             protocol: Some(Protocol::OpenAiCompat),
             capabilities: Capabilities {
-                supported_endpoints: Some(vec!["/chat/completions".to_string()]),
+                supported_apis: Some(vec![Api::ChatCompletions]),
                 ..Capabilities::blank()
             },
         }))

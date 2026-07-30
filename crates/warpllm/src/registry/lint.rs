@@ -145,27 +145,27 @@ fn routable(resolved: &ModelSpec) -> Result<(), String> {
                 .into(),
         );
     }
-    let endpoints = resolved
+    let apis = resolved
         .capabilities
-        .supported_endpoints
+        .supported_apis
         .as_deref()
-        .expect("finish requires supported_endpoints");
-    if endpoints.is_empty() {
+        .expect("finish requires supported_apis");
+    if apis.is_empty() {
         return Err(
-            "capabilities.supported_endpoints names no endpoint, so nothing \
-             could ever route here"
+            "capabilities.supported_apis names no API, so nothing could ever \
+             route here"
                 .into(),
         );
     }
-    // A model can serve fewer endpoints than its protocol defines, never one
-    // the protocol has never heard of.
+    // A model can serve fewer APIs than its protocol defines, never one the
+    // protocol has never heard of. Naming an API that does not exist at all is
+    // caught earlier still, by `Api`'s own deserialization.
     let protocol = resolved.protocol.expect("finish requires protocol");
-    for endpoint in endpoints {
-        if !protocol.endpoints().contains(&endpoint.as_str()) {
+    for api in apis {
+        if !protocol.apis().contains(api) {
             return Err(format!(
-                "`{endpoint}` is not an endpoint of this protocol, which \
-                 defines {:?}",
-                protocol.endpoints()
+                "`{api:?}` is not an API of this protocol, which defines {:?}",
+                protocol.apis()
             ));
         }
     }
@@ -215,8 +215,8 @@ mod tests {
             "    env_api_key: DEMO_API_KEY\n",
             "    protocol: openai_compat\n",
             "    capabilities:\n",
-            "      supported_endpoints:\n",
-            "        - /chat/completions\n",
+            "      supported_apis:\n",
+            "        - chat_completions\n",
             "  other/plain: {}\n",
         ));
         assert!(
@@ -260,8 +260,8 @@ mod tests {
                 "    base_url: \"https://api.other.test\"\n",
                 "    protocol: openai_compat\n",
                 "    capabilities:\n",
-                "      supported_endpoints:\n",
-                "        - /chat/completions\n",
+                "      supported_apis:\n",
+                "        - chat_completions\n",
                 "  other/plain: {}\n",
             )
         ));
@@ -276,16 +276,29 @@ mod tests {
         assert!(err.contains("omit the field entirely"), "{err}");
     }
 
-    /// An endpoint the protocol never defined is a typo, and should be caught
-    /// here rather than 404 against a live provider.
+    /// A misspelled API is a typo, and a closed vocabulary catches it before
+    /// the roster even resolves — so this one does not reach the lint at all,
+    /// let alone a live provider. Held here anyway: what matters is that the
+    /// typo is rejected, not which gate does it.
+    ///
+    /// The message names the whole vocabulary, which is what lets a
+    /// contributor fix the line without opening `protocol/types.rs`.
     #[test]
-    fn endpoints_outside_the_protocol_are_rejected() {
-        let err = check(&with(
-            "  demo/typo:\n    capabilities:\n      supported_endpoints:\n        - /chat/completion\n",
-        ))
-        .unwrap_err();
-        assert!(err.contains("/chat/completion"), "{err}");
-        assert!(err.contains("not an endpoint of this protocol"), "{err}");
+    fn an_api_outside_the_vocabulary_fails_to_load() {
+        let yaml = with(
+            "  demo/typo:\n    capabilities:\n      supported_apis:\n        - chat_completion\n",
+        );
+        let err = load(&yaml).unwrap_err();
+        assert!(err.contains("unknown variant `chat_completion`"), "{err}");
+        for known in ["chat_completions", "chat_completions_stream", "responses"] {
+            assert!(err.contains(known), "vocabulary missing {known}: {err}");
+        }
+        // `check` loads first, so it reports the same thing rather than some
+        // downstream hygiene complaint the typo happens to also trip.
+        assert!(
+            check(&yaml).unwrap_err().contains("unknown variant"),
+            "{err}"
+        );
     }
 
     /// `specs:` is kept in ascending key order so a new entry has one place to
@@ -344,11 +357,11 @@ mod tests {
         // An EMPTY list is a lint failure; omitting the field entirely fails
         // to load, since the merge then has nothing to settle it with.
         let empty = NAMESPACE.replace(
-            "      supported_endpoints:\n        - /chat/completions\n        - /responses\n",
-            "      supported_endpoints: []\n",
+            "      supported_apis:\n        - chat_completions\n        - responses\n",
+            "      supported_apis: []\n",
         );
         let err = check(&format!("{empty}  demo/plain: {{}}\n")).unwrap_err();
-        assert!(err.contains("names no endpoint"), "{err}");
+        assert!(err.contains("names no API"), "{err}");
 
         let err = check("specs: {}\n").unwrap_err();
         assert!(err.contains("names no models"), "{err}");

@@ -33,12 +33,12 @@
 # Resolving a key merges every ancestor namespace into it, least specific
 # first, field by field. An entry restates ONLY what differs — a model that
 # sets nothing but `capabilities.max_concurrent_requests` keeps its
-# namespace's `supported_endpoints`. An entry with no differences at all is
+# namespace's `supported_apis`. An entry with no differences at all is
 # `{}`: it exists to make that model routable.
 #
-# Lists REPLACE, they never append. A model that names `supported_endpoints`
+# Lists REPLACE, they never append. A model that names `supported_apis`
 # gets exactly that list and no more, which is the only way to say "this
-# model serves fewer endpoints than the rest of its namespace".
+# model serves fewer APIs than the rest of its namespace".
 #
 # Unlisted models, and the `*` that serves them
 # ---------------------------------------------
@@ -92,9 +92,26 @@
 #   opting out means declaring it nowhere in the chain. An empty string is
 #   rejected — that is a half-finished edit, not an opt-out.
 # - `protocol` names the wire format spoken. One of: openai_compat.
-# - `capabilities.supported_endpoints` may name only endpoints the entry's
-#   protocol defines; the tests reject the rest, so a typo fails in CI
-#   instead of 404-ing against a live provider.
+# - `capabilities.supported_apis` names the API surfaces this model serves.
+#   These are CAPABILITIES, not URL paths: which path an API is reached at
+#   belongs to the protocol that implements it, and two protocols may serve
+#   the same API at different paths. The vocabulary is closed, so a
+#   misspelling fails to LOAD rather than 404 against a live provider:
+#
+#     chat_completions
+#       One request, one whole reply. The only surface warpllm serves today.
+#
+#     chat_completions_stream
+#       The same request asked to stream, delivered as incremental chunks.
+#       Listed separately because a model can serve one without the other —
+#       declaring `chat_completions` never implies this one, so a model that
+#       streams has to say so.
+#
+#     responses
+#       OpenAI's newer, stateful successor to chat completions.
+#
+#   An entry may serve FEWER of these than its protocol defines, never one the
+#   protocol has never heard of; the tests reject that.
 # - Omit a capability you have not verified. Undocumented is NOT unlimited,
 #   so leaving a limit off is the honest answer, never a guess. An omitted
 #   key and an explicit `null` both mean "inherit".
@@ -110,8 +127,8 @@ specs:
     env_api_key: DEEPSEEK_API_KEY
     protocol: openai_compat
     capabilities:
-      supported_endpoints:
-        - /chat/completions
+      supported_apis:
+        - chat_completions
 
   # The V4 pair; the legacy `deepseek-chat` / `deepseek-reasoner` names were
   # discontinued 2026-07-24 and map to V4-Flash modes. The pair diverges on
@@ -123,16 +140,16 @@ specs:
     capabilities:
       max_concurrent_requests: 500
 
-  # <https://platform.openai.com/docs/api-reference>. Endpoint entries grow
+  # <https://platform.openai.com/docs/api-reference>. API entries grow
   # as warpllm implements them.
   openai/:
     base_url: "https://api.openai.com/v1"
     env_api_key: OPENAI_API_KEY
     protocol: openai_compat
     capabilities:
-      supported_endpoints:
-        - /chat/completions
-        - /responses
+      supported_apis:
+        - chat_completions
+        - responses
 
   # The GPT-5.6 family. No documented divergence from the namespace above is
   # recorded yet: these entries exist to make the four names routable. Add

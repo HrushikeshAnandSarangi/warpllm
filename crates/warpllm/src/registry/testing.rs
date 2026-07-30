@@ -7,7 +7,7 @@
 use super::load::load;
 use super::types::Registry;
 
-/// A namespace with two endpoints and no models — the base most cases diverge
+/// A namespace with two APIs and no models — the base most cases diverge
 /// from. Cases append their own entries, already indented two spaces and sorted
 /// after `demo/`, so appended keys start at line 10.
 pub(super) const NAMESPACE: &str = "\
@@ -17,9 +17,9 @@ specs:
     env_api_key: DEMO_API_KEY
     protocol: openai_compat
     capabilities:
-      supported_endpoints:
-        - /chat/completions
-        - /responses
+      supported_apis:
+        - chat_completions
+        - responses
 ";
 
 /// Nesting at two depths, a namespace at each level, and a sibling outside the
@@ -31,8 +31,8 @@ specs:
     env_api_key: DEMO_API_KEY
     protocol: openai_compat
     capabilities:
-      supported_endpoints:
-        - /chat/completions
+      supported_apis:
+        - chat_completions
   demo/plain: {}
   demo/v1/:
     capabilities:
