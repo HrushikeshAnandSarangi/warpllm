@@ -1,53 +1,58 @@
-//! Roster hygiene: everything true of a GOOD roster that resolving it does
-//! not need in order to succeed.
+//! Roster hygiene: everything true of a GOOD roster that loading it does not
+//! need in order to succeed.
 //!
 //! `cfg(test)`, which is the whole point. A roster that is merely untidy still
-//! produces a correct table, so none of this belongs in the code a caller
-//! links: the table is right whether or not two providers share an
+//! produces correct tables, so none of this belongs in the code a caller
+//! links: the tables are right whether or not two providers share an
 //! environment variable. The tests below run [`check`] over the shipped file,
 //! so CI is the gate and a PR is where it bites.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use super::load::{ancestry, load, parse};
-use super::types::{ModelSpec, Registry};
+use super::load::load;
+use super::types::{ProviderSpec, Registry};
 
 /// Every policy below, first failure reported.
 pub(super) fn check(yaml: &str) -> Result<(), String> {
     // Structure first: a real syntax or key error should be reported as
     // itself, not as whatever hygiene complaint it happens to also trip.
     let registry = load(yaml)?;
-    let file = parse(yaml)?;
-    if file.specs.is_empty() {
-        return Err("specs: the registry names no models".into());
+    if registry.providers.is_empty() {
+        return Err("providers: the registry names no providers".into());
     }
     // Only `Value` keeps the order keys appear in the file; the typed pass has
-    // already sorted them into a `BTreeMap` by the time it returns.
+    // hashed them by the time it returns, and the tables keep no order either.
     let value: yaml_serde::Value = yaml_serde::from_str(yaml).map_err(|e| e.to_string())?;
     sorted(yaml, &value)?;
-    reachable(&file.specs)?;
-    let resolved = by_key(&registry);
-    for (key, spec) in &resolved {
-        routable(spec).map_err(|e| format!("`{key}`: {e}"))?;
+    serves_models(&registry)?;
+    // `HashMap`s, so iterating them directly would make a message name
+    // whichever member of a collision came up first. Both loops below read a
+    // sorted view instead, so the error a contributor sees is the one CI saw.
+    for (name, provider) in by_name(&registry) {
+        routable(provider).map_err(|e| format!("`{name}`: {e}"))?;
     }
-    env_api_keys(&resolved)
+    for (key, spec) in registry.models.iter().collect::<BTreeMap<_, _>>() {
+        if spec.model().is_empty() {
+            return Err(format!(
+                "`{key}`: model is empty; omit the field to ship the key's own \
+                 last segment"
+            ));
+        }
+    }
+    env_api_keys(&registry)
 }
 
-/// A `Registry` is a `HashMap`, so iterating it directly would make the
-/// messages below name whichever member of a collision came up first. Every
-/// check that can fail on one of two entries reads this instead, so the error
-/// a contributor sees is the same one CI saw.
-fn by_key(registry: &Registry) -> BTreeMap<&str, &ModelSpec> {
+fn by_name(registry: &Registry) -> BTreeMap<&str, &ProviderSpec> {
     registry
-        .specs
+        .providers
         .iter()
-        .map(|(key, spec)| (key.as_str(), spec))
+        .map(|(name, provider)| (name.as_str(), provider))
         .collect()
 }
 
-/// `specs:` is kept in ascending key order. Byte order puts a namespace
-/// immediately above the models that inherit from it, so a contributor adding
-/// an entry has exactly one place to put it and two PRs adding different
+/// Both maps are kept in ascending key order: providers alphabetically, and
+/// each provider's models alphabetically within it. A contributor adding an
+/// entry then has exactly one place to put it, and two PRs adding different
 /// providers do not collide.
 ///
 /// Reads the raw text as well as the parsed value, only to put line numbers in
@@ -55,24 +60,41 @@ fn by_key(registry: &Registry) -> BTreeMap<&str, &ModelSpec> {
 /// without having to work out what "unsorted" means, so it names the key to
 /// move, where to move it, and the ordering it is being judged against.
 fn sorted(yaml: &str, value: &yaml_serde::Value) -> Result<(), String> {
-    // A missing or malformed `specs:` is the typed pass's error to report.
-    let Some(specs) = value.get("specs").and_then(|v| v.as_mapping()) else {
+    // A missing or malformed `providers:` is the typed pass's error to report.
+    let Some(providers) = value.get("providers").and_then(|v| v.as_mapping()) else {
         return Ok(());
     };
-    let keys: Vec<&str> = specs.keys().filter_map(|k| k.as_str()).collect();
+    ascending("providers", yaml, providers.keys())?;
+    for (name, entry) in providers {
+        let (Some(name), Some(models)) = (name.as_str(), entry.get("models")) else {
+            continue;
+        };
+        let Some(models) = models.as_mapping() else {
+            continue;
+        };
+        ascending(&format!("`{name}`'s models"), yaml, models.keys())?;
+    }
+    Ok(())
+}
+
+/// One map's keys, in the order the file writes them.
+fn ascending<'a>(
+    what: &str,
+    yaml: &str,
+    keys: impl Iterator<Item = &'a yaml_serde::Value>,
+) -> Result<(), String> {
+    let keys: Vec<&str> = keys.filter_map(yaml_serde::Value::as_str).collect();
     for pair in keys.windows(2) {
-        // Equal keys never reach this: `parse`'s `Value` pass rejects a
+        // Equal keys never reach this: `load`'s `Value` pass rejects a
         // duplicate before the order of two of them could be in question.
         let (above, below) = (pair[0], pair[1]);
         if above <= below {
             continue;
         }
         return Err(format!(
-            "specs: `{below}`{} is out of order — move it above `{above}`{}.\n\
+            "{what}: `{below}`{} is out of order — move it above `{above}`{}.\n\
              Entries are kept in ascending BYTE order, which is what \
-             `LC_ALL=C sort` gives and may differ from your editor's sort. \
-             That ordering is what puts a namespace directly above the \
-             models that inherit from it.",
+             `LC_ALL=C sort` gives and may differ from your editor's sort.",
             line_of(yaml, below),
             line_of(yaml, above),
         ));
@@ -80,7 +102,7 @@ fn sorted(yaml: &str, value: &yaml_serde::Value) -> Result<(), String> {
     Ok(())
 }
 
-/// ` (line N)` for a `specs:` key, or nothing when the text does not show it
+/// ` (line N)` for a roster key, or nothing when the text does not show it
 /// plainly.
 ///
 /// A scan rather than a span because `yaml_serde::Value` carries no positions.
@@ -98,74 +120,59 @@ fn line_of(yaml: &str, key: &str) -> String {
         .map_or_else(String::new, |i| format!(" (line {})", i + 1))
 }
 
-/// A namespace nothing inherits from is an unreachable provider: it holds a
-/// spec no caller can ever route to.
-fn reachable(specs: &BTreeMap<String, ModelSpec>) -> Result<(), String> {
-    let mut reached = BTreeSet::new();
-    for key in specs.keys().filter(|k| !k.ends_with('/')) {
-        reached.extend(ancestry(key));
-    }
-    for key in specs.keys().filter(|k| k.ends_with('/')) {
-        if !reached.contains(key.as_str()) {
+/// A provider nothing routes to holds a transport no caller can ever reach.
+fn serves_models(registry: &Registry) -> Result<(), String> {
+    let serving: HashSet<&str> = registry
+        .models
+        .values()
+        .map(|spec| spec.provider.as_str())
+        .collect();
+    for name in by_name(registry).into_keys() {
+        if !serving.contains(name) {
             return Err(format!(
-                "`{key}`: nothing routes through this namespace. Give it a \
-                 model entry, or delete it."
+                "`{name}`: this provider registers no models, so nothing can route \
+                 to it. Give it a model entry, or delete it."
             ));
         }
     }
     Ok(())
 }
 
-/// Whether a resolved entry could actually serve a request. Every one of these
-/// resolves fine and then misbehaves at runtime, which is exactly why they are
-/// worth a test.
-fn routable(resolved: &ModelSpec) -> Result<(), String> {
-    // Every `expect` here is discharged by `finish`, which is the only way a
-    // `ModelSpec` reaches this function.
-    let base_url = resolved
-        .base_url
-        .as_deref()
-        .expect("finish requires base_url");
-    if base_url.is_empty() {
+/// Whether a provider could actually serve a request. Every one of these loads
+/// fine and then misbehaves at runtime, which is exactly why they are worth a
+/// test.
+fn routable(provider: &ProviderSpec) -> Result<(), String> {
+    if provider.base_url().is_empty() {
         return Err("base_url is empty".into());
     }
-    if base_url.ends_with('/') {
+    if provider.base_url().ends_with('/') {
         return Err(format!(
-            "base_url `{base_url}` ends with `/`; endpoints append their own \
-             path, which would produce a doubled slash"
+            "base_url `{}` ends with `/`; endpoints append their own path, which \
+             would produce a doubled slash",
+            provider.base_url()
         ));
     }
-    // Optional — an entry may name no variable at all — but an empty string is
-    // never what anyone meant by that. Say so rather than resolve it to a
+    // Optional — a provider may name no variable at all — but an empty string
+    // is never what anyone meant by that. Say so rather than resolve it to a
     // lookup of `""` at request time.
-    if resolved.env_api_key.as_deref().is_some_and(str::is_empty) {
+    if provider.env_api_key().is_some_and(str::is_empty) {
         return Err(
-            "env_api_key is empty; omit the field entirely if this model takes \
+            "env_api_key is empty; omit the field entirely if this provider takes \
              its key from the caller"
                 .into(),
         );
     }
-    let apis = resolved
-        .capabilities
-        .supported_apis
-        .as_deref()
-        .expect("finish requires supported_apis");
-    if apis.is_empty() {
-        return Err(
-            "capabilities.supported_apis names no API, so nothing could ever \
-             route here"
-                .into(),
-        );
+    if provider.supported_apis().is_empty() {
+        return Err("supported_apis names no API, so nothing could ever route here".into());
     }
-    // A model can serve fewer APIs than its protocol defines, never one the
+    // A provider can serve fewer APIs than its protocol defines, never one the
     // protocol has never heard of. Naming an API that does not exist at all is
     // caught earlier still, by `Api`'s own deserialization.
-    let protocol = resolved.protocol.expect("finish requires protocol");
-    for api in apis {
-        if !protocol.apis().contains(api) {
+    for api in provider.supported_apis() {
+        if !provider.protocol().apis().contains(api) {
             return Err(format!(
                 "`{api:?}` is not an API of this protocol, which defines {:?}",
-                protocol.apis()
+                provider.protocol().apis()
             ));
         }
     }
@@ -175,20 +182,18 @@ fn routable(resolved: &ModelSpec) -> Result<(), String> {
 /// Two providers sharing one environment variable would silently authenticate
 /// one with the other's credentials, so a collision has to be resolved
 /// deliberately rather than inherited by accident.
-fn env_api_keys(resolved: &BTreeMap<&str, &ModelSpec>) -> Result<(), String> {
-    let mut owner: BTreeMap<&str, &str> = BTreeMap::new();
-    for spec in resolved.values() {
-        // Nothing to collide over when an entry names no variable.
-        let Some(env_api_key) = spec.env_api_key.as_deref() else {
+fn env_api_keys(registry: &Registry) -> Result<(), String> {
+    // A lookup, never iterated: the ordering that makes this message
+    // deterministic is `by_name`'s, one line below.
+    let mut owner: HashMap<&str, &str> = HashMap::new();
+    for (name, provider) in by_name(registry) {
+        // Nothing to collide over when a provider names no variable.
+        let Some(env_api_key) = provider.env_api_key() else {
             continue;
         };
-        let provider = spec.provider.as_deref().expect("finish sets provider");
-        let claimed = owner.insert(env_api_key, provider);
-        if let Some(other) = claimed
-            && other != provider
-        {
+        if let Some(other) = owner.insert(env_api_key, name) {
             return Err(format!(
-                "`{env_api_key}` is claimed by both `{other}` and `{provider}`; \
+                "`{env_api_key}` is claimed by both `{other}` and `{name}`; \
                  every provider needs its own environment variable"
             ));
         }
@@ -196,51 +201,41 @@ fn env_api_keys(resolved: &BTreeMap<&str, &ModelSpec>) -> Result<(), String> {
     Ok(())
 }
 
-/// Every case here RESOLVES fine — the table it produces is correct. What is
+/// Every case here LOADS fine — the tables it produces are correct. What is
 /// wrong with it is the roster, which is why this is the gate and `load` is
 /// not.
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{NAMESPACE, clean, with};
+    use super::super::testing::{OTHER_PROVIDER, PROVIDER, clean, with};
     use super::*;
+
+    /// One provider's roster, plus a second one that shares its variable.
+    fn two_providers(env_api_key: &str) -> String {
+        format!(
+            "{}{}",
+            with("      demo/plain: {}\n"),
+            OTHER_PROVIDER.replace("OTHER_API_KEY", env_api_key)
+        )
+    }
 
     /// Two providers sharing an environment variable would silently
     /// authenticate one with the other's credentials.
     #[test]
     fn colliding_env_api_keys_are_rejected() {
-        let yaml = with(concat!(
-            "  demo/plain: {}\n",
-            "  other/:\n",
-            "    base_url: \"https://api.other.test\"\n",
-            "    env_api_key: DEMO_API_KEY\n",
-            "    protocol: openai_compat\n",
-            "    capabilities:\n",
-            "      supported_apis:\n",
-            "        - chat_completions\n",
-            "  other/plain: {}\n",
-        ));
+        let yaml = two_providers("DEMO_API_KEY");
         assert!(
             load(&yaml).is_ok(),
-            "the roster is what is wrong, not the table"
+            "the roster is what is wrong, not the tables"
         );
         let err = check(&yaml).unwrap_err();
         assert!(err.contains("DEMO_API_KEY"), "{err}");
         assert!(err.contains("its own environment variable"), "{err}");
     }
 
-    /// One provider using one variable across all its models is the normal
-    /// case and must keep working.
+    /// Two providers with their own variables are the normal case.
     #[test]
-    fn one_provider_may_reuse_its_own_env_api_key() {
-        let registry = clean(&with("  demo/a: {}\n  demo/b: {}\n"));
-        assert_eq!(
-            registry.get("demo/a").unwrap().env_api_key(),
-            Some("DEMO_API_KEY")
-        );
-        assert_eq!(
-            registry.get("demo/b").unwrap().env_api_key(),
-            Some("DEMO_API_KEY")
-        );
+    fn distinct_env_api_keys_are_accepted() {
+        clean(&two_providers("OTHER_API_KEY"));
     }
 
     /// Naming no variable is not a collision, so two providers may both do it.
@@ -248,46 +243,35 @@ mod tests {
     /// owner, which would reject a perfectly good roster.
     #[test]
     fn two_providers_may_both_name_no_env_api_key() {
-        let bare = NAMESPACE
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("env_api_key:"))
-            .fold(String::new(), |acc, line| acc + line + "\n");
-        clean(&format!(
-            "{bare}{}",
-            concat!(
-                "  demo/plain: {}\n",
-                "  other/:\n",
-                "    base_url: \"https://api.other.test\"\n",
-                "    protocol: openai_compat\n",
-                "    capabilities:\n",
-                "      supported_apis:\n",
-                "        - chat_completions\n",
-                "  other/plain: {}\n",
-            )
-        ));
+        let drop_keys = |yaml: &str| {
+            yaml.lines()
+                .filter(|line| !line.trim_start().starts_with("env_api_key:"))
+                .fold(String::new(), |acc, line| acc + line + "\n")
+        };
+        clean(&drop_keys(&two_providers("OTHER_API_KEY")));
     }
 
     /// An empty string is not the same as omitting the field, and resolving it
     /// would send a request-time lookup of `""`.
     #[test]
     fn an_empty_env_api_key_points_at_omitting_it() {
-        let err = check(&with("  demo/plain:\n    env_api_key: \"\"\n")).unwrap_err();
+        let yaml = with("      demo/plain: {}\n").replace("DEMO_API_KEY", "\"\"");
+        let err = check(&yaml).unwrap_err();
         assert!(err.contains("env_api_key is empty"), "{err}");
         assert!(err.contains("omit the field entirely"), "{err}");
     }
 
     /// A misspelled API is a typo, and a closed vocabulary catches it before
-    /// the roster even resolves — so this one does not reach the lint at all,
-    /// let alone a live provider. Held here anyway: what matters is that the
-    /// typo is rejected, not which gate does it.
+    /// the roster even loads — so this one does not reach the lint at all, let
+    /// alone a live provider. Held here anyway: what matters is that the typo
+    /// is rejected, not which gate does it.
     ///
     /// The message names the whole vocabulary, which is what lets a
     /// contributor fix the line without opening `protocol/types.rs`.
     #[test]
     fn an_api_outside_the_vocabulary_fails_to_load() {
-        let yaml = with(
-            "  demo/typo:\n    capabilities:\n      supported_apis:\n        - chat_completion\n",
-        );
+        let yaml =
+            with("      demo/plain: {}\n").replace("- chat_completions", "- chat_completion");
         let err = load(&yaml).unwrap_err();
         assert!(err.contains("unknown variant `chat_completion`"), "{err}");
         for known in ["chat_completions", "chat_completions_stream", "responses"] {
@@ -301,19 +285,53 @@ mod tests {
         );
     }
 
-    /// `specs:` is kept in ascending key order so a new entry has one place to
-    /// go and two PRs adding different providers do not collide. Purely a
-    /// convention, which is exactly why it must not stop a table being built.
+    /// Both maps are kept sorted so a new entry has one place to go and two
+    /// PRs adding different providers do not collide. Purely a convention,
+    /// which is exactly why it must not stop the tables being built.
     #[test]
-    fn out_of_order_keys_are_rejected() {
-        let yaml = with("  demo/zeta: {}\n  demo/alpha: {}\n");
-        assert!(load(&yaml).is_ok(), "key order cannot break resolution");
+    fn out_of_order_models_are_rejected() {
+        let yaml = with("      demo/zeta: {}\n      demo/alpha: {}\n");
+        assert!(load(&yaml).is_ok(), "key order cannot break loading");
         let err = check(&yaml).unwrap_err();
-        // Names the key to move, where to move it, and the ordering it is
-        // judged against, so nobody has to work out what "unsorted" meant.
+        // Names the map, the key to move, where to move it, and the ordering
+        // it is judged against, so nobody has to work out what "unsorted"
+        // meant.
+        assert!(err.contains("`demo`'s models"), "{err}");
         assert!(err.contains("`demo/alpha` (line 11)"), "{err}");
         assert!(err.contains("move it above `demo/zeta` (line 10)"), "{err}");
         assert!(err.contains("ascending BYTE order"), "{err}");
+    }
+
+    /// Every provider's models are checked, not just the first one's. The
+    /// check walks a map of maps, so a version of it that stopped after one
+    /// provider would pass every other case here and quietly let the rest of
+    /// the roster drift out of order.
+    #[test]
+    fn out_of_order_models_are_rejected_under_any_provider() {
+        // `demo` above is in order; the misplaced key is in the LAST provider.
+        let yaml = format!(
+            "{}{OTHER_PROVIDER}      other/alpha: {{}}\n",
+            with("      demo/plain: {}\n")
+        );
+        assert!(load(&yaml).is_ok(), "key order cannot break loading");
+        let err = check(&yaml).unwrap_err();
+        assert!(err.contains("`other`'s models"), "{err}");
+        assert!(err.contains("move it above `other/plain`"), "{err}");
+    }
+
+    /// The provider map is held to the same rule, and says which map it is
+    /// talking about.
+    #[test]
+    fn out_of_order_providers_are_rejected() {
+        let demo = with("      demo/plain: {}\n");
+        let demo = demo
+            .strip_prefix("providers:\n")
+            .expect("the fixture's first line");
+        let yaml = format!("providers:\n{OTHER_PROVIDER}{demo}");
+        assert!(load(&yaml).is_ok(), "key order cannot break loading");
+        let err = check(&yaml).unwrap_err();
+        assert!(err.contains("providers: `demo`"), "{err}");
+        assert!(err.contains("move it above `other`"), "{err}");
     }
 
     /// The line number points at the misplaced key's OWN line even when a
@@ -321,49 +339,52 @@ mod tests {
     /// search gets wrong.
     #[test]
     fn the_order_error_points_at_the_right_line() {
-        let err = check(&with("  demo/model-x: {}\n  demo/model: {}\n")).unwrap_err();
+        let err = check(&with("      demo/model-x: {}\n      demo/model: {}\n")).unwrap_err();
         assert!(err.contains("`demo/model` (line 11)"), "{err}");
         assert!(err.contains("above `demo/model-x` (line 10)"), "{err}");
     }
 
+    /// Both ways of writing "no models yet" load fine and are caught here,
+    /// because a provider nothing routes to is dead weight in the roster.
     #[test]
-    fn an_unreachable_namespace_is_rejected() {
-        let err = check(NAMESPACE).unwrap_err();
-        assert!(
-            err.contains("nothing routes through this namespace"),
-            "{err}"
-        );
+    fn a_provider_with_no_models_is_rejected() {
+        for yaml in [PROVIDER, &PROVIDER.replace("    models:\n", "")] {
+            assert!(load(yaml).is_ok(), "the roster is what is wrong: {yaml}");
+            let err = check(yaml).unwrap_err();
+            assert!(err.contains("registers no models"), "{err}");
+        }
     }
 
-    /// A wildcard is a routable entry, so it makes its namespace reachable on
-    /// its own — a provider can be served entirely by one `*`.
+    /// Each of these loads into a spec that is well-formed and then cannot
+    /// serve a request: no credential, a URL that would double its slash, or
+    /// no surface at all.
     #[test]
-    fn a_wildcard_alone_makes_its_namespace_reachable() {
-        clean(&with("  demo/*: {}\n"));
-    }
+    fn unroutable_providers_are_rejected() {
+        let models = "      demo/plain: {}\n";
 
-    /// Each of these resolves to a spec that is well-formed and then cannot
-    /// serve a request: no host, no credential, or a URL that would double its
-    /// slash.
-    #[test]
-    fn unroutable_specs_are_rejected() {
-        let err = check(&with("  demo/plain:\n    env_api_key: \"\"\n")).unwrap_err();
-        assert!(err.contains("env_api_key is empty"), "{err}");
-
-        let trailing = NAMESPACE.replace("api.demo.test/v1", "api.demo.test/v1/");
-        let err = check(&format!("{trailing}  demo/plain: {{}}\n")).unwrap_err();
+        let trailing = with(models).replace("api.demo.test/v1", "api.demo.test/v1/");
+        let err = check(&trailing).unwrap_err();
         assert!(err.contains("doubled slash"), "{err}");
 
         // An EMPTY list is a lint failure; omitting the field entirely fails
-        // to load, since the merge then has nothing to settle it with.
-        let empty = NAMESPACE.replace(
-            "      supported_apis:\n        - chat_completions\n        - responses\n",
-            "      supported_apis: []\n",
+        // to load, since nothing else could answer it.
+        let empty = with(models).replace(
+            "    supported_apis:\n      - chat_completions\n      - responses\n",
+            "    supported_apis: []\n",
         );
-        let err = check(&format!("{empty}  demo/plain: {{}}\n")).unwrap_err();
+        let err = check(&empty).unwrap_err();
         assert!(err.contains("names no API"), "{err}");
 
-        let err = check("specs: {}\n").unwrap_err();
-        assert!(err.contains("names no models"), "{err}");
+        let err = check("providers: {}\n").unwrap_err();
+        assert!(err.contains("names no providers"), "{err}");
+    }
+
+    /// An empty `model` would ship `"model": ""` upstream, which no provider
+    /// serves. Omitting the field is how an entry says "use my key's name".
+    #[test]
+    fn an_empty_model_points_at_omitting_it() {
+        let err = check(&with("      demo/plain:\n        model: \"\"\n")).unwrap_err();
+        assert!(err.contains("model is empty"), "{err}");
+        assert!(err.contains("omit the field"), "{err}");
     }
 }

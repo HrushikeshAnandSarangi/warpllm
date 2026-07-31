@@ -14,17 +14,13 @@ pub use client::Client;
 pub use config::ClientConfig;
 pub use error::{Error, Result};
 pub use protocol::{Api, Protocol};
-/// The registry's public face. `registry` itself stays private: it is where
-/// the roster, the resolution, and the lookup live, and none of that is API.
+/// The registry's public face: a provider, a model, and the lookup that hands
+/// back one of each. `registry` itself stays private — the roster, the schema,
+/// and the loading are not API.
 ///
-/// Read-only by construction — every field is private and there is no public
-/// constructor, so [`model_spec`] is the way to get one. The one exception is
-/// [`serde::Deserialize`], which these types derive because the same
-/// declaration is the registry's YAML schema; a spec deserialized from
-/// anything other than the registry can be missing fields the accessors read
-/// unconditionally, and those accessors will panic. Go through
-/// [`model_spec`].
-pub use registry::{Capabilities, ModelSpec, model_spec};
+/// Read-only by construction: every field is private and there is no public
+/// constructor, so [`fetch_model`] is the way to obtain either half.
+pub use registry::{Capabilities, ModelSpec, ProviderSpec, fetch_model};
 pub use types::openai_compat::chat::completions::*;
 
 /// Returns the warpllm version.

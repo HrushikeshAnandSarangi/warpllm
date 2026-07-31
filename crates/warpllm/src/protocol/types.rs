@@ -55,8 +55,8 @@ impl Protocol {
     }
 }
 
-/// One API surface a model can serve, as named in a registry entry's
-/// `capabilities.supported_apis`.
+/// One API surface a provider can serve, as named in a registry provider's
+/// `supported_apis`.
 ///
 /// A capability, not a URL: two protocols can serve the same API at different
 /// paths, so the path belongs to the protocol module that implements it. Being

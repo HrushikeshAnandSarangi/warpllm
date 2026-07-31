@@ -6,7 +6,7 @@ use crate::config::{ClientConfig, DEFAULT_TIMEOUT_SECS};
 use crate::error::{Error, Result};
 use crate::protocol;
 use crate::protocol::{Api, Protocol};
-use crate::registry::{ModelSpec, model_spec};
+use crate::registry::{ModelSpec, ProviderSpec, fetch_model};
 use crate::types::openai_compat::chat::completions::{
     CreateChatCompletionRequest, CreateChatCompletionResponse,
 };
@@ -60,11 +60,11 @@ impl Client {
             return Err(Error::NotImplemented("streaming"));
         }
         let requested_model = request.model.clone();
-        let spec = model_spec(&requested_model)?;
-        let api_key = self.api_key(spec)?;
-        let mut completion = match spec.protocol() {
+        let (provider, model) = fetch_model(&requested_model)?;
+        let api_key = self.api_key(provider)?;
+        let mut completion = match provider.protocol() {
             Protocol::OpenAiCompat => {
-                self.openai_compat_chat(spec, &requested_model, request, &api_key)
+                self.openai_compat_chat(provider, model, &requested_model, request, &api_key)
                     .await?
             }
         };
@@ -76,64 +76,68 @@ impl Client {
     /// The OpenAI-compatible pipeline: ingest to the normalized form,
     /// render for the provider, post, and convert the response back out.
     ///
-    /// `&'static ModelSpec` — which is all [`model_spec`] hands out — because
-    /// the errors below and the protocol layer both name a provider with a
+    /// `&'static` specs — which is all [`fetch_model`] hands out — because the
+    /// errors below and the protocol layer both name a provider with a
     /// `&'static str`, and a spec's accessors borrow from the spec.
     async fn openai_compat_chat(
         &self,
-        spec: &'static ModelSpec,
+        provider: &'static ProviderSpec,
+        model: &'static ModelSpec,
         requested_model: &str,
         request: CreateChatCompletionRequest,
         api_key: &str,
     ) -> Result<CreateChatCompletionResponse> {
         use protocol::openai_compat::chat::completions as endpoint;
 
-        if !spec.capabilities().supports_api(Api::ChatCompletions) {
+        if !provider.supports_api(Api::ChatCompletions) {
             return Err(Error::InvalidInput(format!(
                 "{}: {} does not serve chat completions",
-                spec.provider(),
+                provider.name(),
                 requested_model
             )));
         }
-        // `wire_model`, not `model`: under a wildcard entry the upstream name
-        // is whatever the caller asked for, which the spec cannot know.
-        let normalized = endpoint::ingest_request(request, spec.wire_model(requested_model));
-        let wire = endpoint::render_request(&normalized, spec.provider())?;
+        // The ENTRY's name, not the caller's string: they differ whenever
+        // warpllm's routing alias differs from the provider's own name.
+        let normalized = endpoint::ingest_request(request, model.model());
+        let wire = endpoint::render_request(&normalized, provider.name())?;
         let wire_response = endpoint::post(
             &self.http,
-            spec.provider(),
-            self.base_url(spec),
+            provider.name(),
+            self.base_url(provider),
             api_key,
             &wire,
         )
         .await?;
         let response = endpoint::ingest_response(wire_response);
-        Ok(endpoint::render_response(&response, spec.provider()))
+        Ok(endpoint::render_response(&response, provider.name()))
     }
 
-    /// An explicit key first, then the model's own environment variable if it
-    /// names one.
+    /// An explicit key first, then the provider's own environment variable if
+    /// it names one.
     ///
-    /// A spec with no `env_api_key` has no second source: it authenticates
+    /// A provider with no `env_api_key` has no second source: it authenticates
     /// only through [`Client::with_api_key`], and without one the error says
     /// so rather than naming a variable that does not exist.
-    fn api_key(&self, spec: &'static ModelSpec) -> Result<String> {
+    fn api_key(&self, provider: &'static ProviderSpec) -> Result<String> {
         if let Some(key) = &self.api_key_override {
             return Ok(key.clone());
         }
-        let env_var = spec.env_api_key();
+        let env_var = provider.env_api_key();
         env_var
             .and_then(|var| std::env::var(var).ok())
             .ok_or(Error::MissingApiKey {
-                provider: spec.provider(),
+                provider: provider.name(),
                 env_var,
             })
     }
 
     /// A configured `base_url` overrides the provider default (proxies,
     /// tests); otherwise each provider talks to its own API.
-    fn base_url(&self, spec: &'static ModelSpec) -> &str {
-        self.config.base_url.as_deref().unwrap_or(spec.base_url())
+    fn base_url(&self, provider: &'static ProviderSpec) -> &str {
+        self.config
+            .base_url
+            .as_deref()
+            .unwrap_or(provider.base_url())
     }
 }
 
@@ -143,42 +147,32 @@ mod tests {
     use crate::registry::Capabilities;
     use crate::types::openai_compat::chat::completions::ChatCompletionRequestMessage;
 
-    fn spec_for(model: &str) -> &'static ModelSpec {
-        model_spec(model).unwrap()
+    /// The two halves the client works from, for a model the shipped roster
+    /// does have.
+    fn pair_for(model: &str) -> (&'static ProviderSpec, &'static ModelSpec) {
+        fetch_model(model).unwrap()
     }
 
-    /// A wildcard spec, which the SHIPPED roster deliberately has none of —
-    /// so the only way to exercise the wildcard path through the client is to
-    /// build one. Leaked because `openai_compat_chat` takes `&'static`, which
-    /// costs nothing in a test process that is about to exit.
-    fn wildcard_spec(base_url: &str) -> &'static ModelSpec {
-        Box::leak(Box::new(ModelSpec {
-            provider: Some("demo".into()),
-            wildcard: true,
-            // What a `*` key resolves to: no upstream name of its own.
-            model: Some("*".into()),
-            base_url: Some(base_url.into()),
-            env_api_key: Some("DEMO_API_KEY".into()),
-            protocol: Some(Protocol::OpenAiCompat),
-            capabilities: Capabilities {
-                supported_apis: Some(vec![Api::ChatCompletions]),
-                ..Capabilities::blank()
-            },
+    /// Leaked because the client takes `&'static` specs, which costs nothing
+    /// in a test process that is about to exit.
+    fn demo_provider(base_url: &str, env_api_key: Option<&str>) -> &'static ProviderSpec {
+        Box::leak(Box::new(ProviderSpec {
+            name: "demo".into(),
+            base_url: base_url.into(),
+            env_api_key: env_api_key.map(str::to_string),
+            protocol: Protocol::OpenAiCompat,
+            supported_apis: vec![Api::ChatCompletions],
         }))
     }
 
-    /// A model that names no environment variable cannot fall back to one, so
-    /// the error must say that rather than send someone off to set a variable
-    /// nothing reads.
+    /// A provider that names no environment variable cannot fall back to one,
+    /// so the error must say that rather than send someone off to set a
+    /// variable nothing reads.
     #[test]
-    fn a_model_with_no_env_api_key_asks_for_an_explicit_one() {
-        let spec = Box::leak(Box::new(ModelSpec {
-            env_api_key: None,
-            ..(*wildcard_spec("https://api.demo.test")).clone()
-        }));
+    fn a_provider_with_no_env_api_key_asks_for_an_explicit_one() {
         let err = Client::new(ClientConfig::default())
             .unwrap()
-            .api_key(spec)
+            .api_key(demo_provider("https://api.demo.test", None))
             .unwrap_err();
         match &err {
             Error::MissingApiKey { provider, env_var } => {
@@ -200,24 +194,25 @@ mod tests {
         assert!(wire["env_var"].is_null());
     }
 
-    /// And an explicitly supplied key is all such a model ever needed.
+    /// And an explicitly supplied key is all such a provider ever needed.
     #[test]
-    fn an_explicit_key_serves_a_model_with_no_env_api_key() {
-        let spec = Box::leak(Box::new(ModelSpec {
-            env_api_key: None,
-            ..(*wildcard_spec("https://api.demo.test")).clone()
-        }));
+    fn an_explicit_key_serves_a_provider_with_no_env_api_key() {
         let client = Client::new(ClientConfig::default())
             .unwrap()
             .with_api_key("sk-explicit");
-        assert_eq!(client.api_key(spec).unwrap(), "sk-explicit");
+        assert_eq!(
+            client
+                .api_key(demo_provider("https://api.demo.test", None))
+                .unwrap(),
+            "sk-explicit"
+        );
     }
 
-    /// The one line that makes wildcards work at all: what ships upstream is
-    /// the name the caller asked for, never the entry's `*`. A provider that
-    /// received `"model": "*"` would reject every wildcard-routed request.
+    /// What ships upstream is the ENTRY's name, never the string the caller
+    /// routed with. That is the whole point of `model:` — a warpllm alias may
+    /// differ from the provider's own name for the same model.
     #[tokio::test]
-    async fn a_wildcard_sends_the_requested_name_upstream() {
+    async fn an_alias_sends_the_entrys_own_name_upstream() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -228,7 +223,7 @@ mod tests {
                 "id": "chatcmpl-1",
                 "object": "chat.completion",
                 "created": 1_700_000_000,
-                "model": "gpt-9",
+                "model": "demo-chat-20240101",
                 "choices": [{
                     "index": 0,
                     "message": {"role": "assistant", "content": "hi"},
@@ -238,9 +233,14 @@ mod tests {
             .mount(&server)
             .await;
 
+        let aliased = Box::leak(Box::new(ModelSpec {
+            provider: "demo".into(),
+            model: "demo-chat-20240101".into(),
+            capabilities: Capabilities::blank(),
+        }));
         let client = Client::new(ClientConfig::default()).unwrap();
         let request = CreateChatCompletionRequest {
-            model: "demo/gpt-9".into(),
+            model: "demo/chat".into(),
             messages: vec![ChatCompletionRequestMessage {
                 role: "user".into(),
                 content: "hi".into(),
@@ -249,15 +249,21 @@ mod tests {
             ..Default::default()
         };
         client
-            .openai_compat_chat(wildcard_spec(&server.uri()), "demo/gpt-9", request, "k")
+            .openai_compat_chat(
+                demo_provider(&server.uri(), Some("DEMO_API_KEY")),
+                aliased,
+                "demo/chat",
+                request,
+                "k",
+            )
             .await
             .unwrap();
 
         let sent = &server.received_requests().await.unwrap()[0];
         let body: serde_json::Value = serde_json::from_slice(&sent.body).unwrap();
         assert_eq!(
-            body["model"], "gpt-9",
-            "a wildcard shipped its own `*` instead of the requested name"
+            body["model"], "demo-chat-20240101",
+            "the caller's routing string shipped instead of the entry's name"
         );
     }
 
@@ -299,8 +305,9 @@ mod tests {
             }],
             ..Default::default()
         };
+        let (provider, model) = pair_for("openai/gpt-5.6");
         client
-            .openai_compat_chat(spec_for("openai/gpt-5.6"), "openai/gpt-5.6", request, "k")
+            .openai_compat_chat(provider, model, "openai/gpt-5.6", request, "k")
             .await
             .unwrap();
 
@@ -313,11 +320,11 @@ mod tests {
     fn base_url_defaults_to_each_providers_api() {
         let client = Client::new(ClientConfig::default()).unwrap();
         assert_eq!(
-            client.base_url(spec_for("openai/gpt-5.6")),
+            client.base_url(pair_for("openai/gpt-5.6").0),
             "https://api.openai.com/v1"
         );
         assert_eq!(
-            client.base_url(spec_for("deepseek/deepseek-v4-flash")),
+            client.base_url(pair_for("deepseek/deepseek-v4-flash").0),
             "https://api.deepseek.com"
         );
     }
@@ -330,7 +337,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            client.base_url(spec_for("openai/gpt-5.6")),
+            client.base_url(pair_for("openai/gpt-5.6").0),
             "http://localhost:9999"
         );
     }

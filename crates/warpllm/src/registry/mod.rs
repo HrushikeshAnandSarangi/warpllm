@@ -4,17 +4,17 @@
 //! door. Nothing here is hand-written per provider: adding a provider or a
 //! model is a YAML edit, never a Rust edit.
 //!
-//! The file is compiled into the binary with `include_str!` and resolved once,
-//! lazily, on the first lookup — a few kilobytes, turned into a `HashMap` that
-//! then answers every request without walking anything. It used to be compiled
-//! to Rust source by a build script; that bought a build-time gate on a bad
-//! roster and cost a code generator writing Rust by string concatenation, a
-//! types file `include!`d into two crates, and leaked `&'static` strings to
-//! make the result a `const`. The gate now lives in
+//! The file is compiled into the binary with `include_str!` and loaded once,
+//! lazily, on the first lookup — a few kilobytes, turned into two `HashMap`s
+//! that then answer every request without walking anything. It used to be
+//! compiled to Rust source by a build script; that bought a build-time gate on
+//! a bad roster and cost a code generator writing Rust by string
+//! concatenation, a types file `include!`d into two crates, and leaked
+//! `&'static` strings to make the result a `const`. The gate now lives in
 //! `the_shipped_registry_loads_and_lints`, which CI runs on every PR.
 //!
-//! Three modules and no more: `types` is what an entry IS, `load` turns the
-//! file into the table, `lint` holds what is merely true of a tidy roster.
+//! Three modules and no more: `types` is what a spec IS, `load` turns the
+//! file into the tables, `lint` holds what is merely true of a tidy roster.
 //! Each keeps its own tests.
 
 use std::sync::LazyLock;
@@ -30,11 +30,11 @@ mod lint;
 mod testing;
 
 use types::Registry;
-pub use types::{Capabilities, ModelSpec};
+pub use types::{Capabilities, ModelSpec, ProviderSpec};
 
-/// The shipped roster, resolved on first use.
+/// The shipped roster, loaded on first use.
 ///
-/// The panic is deliberate and stays out of [`model_spec`]'s signature: the
+/// The panic is deliberate and stays out of [`fetch_model`]'s signature: the
 /// input is compiled into this binary, cannot vary at runtime, and is held to
 /// both gates by `the_shipped_registry_loads_and_lints`. Threading "warpllm's
 /// own roster is malformed" through the public API would put an arm at every
@@ -43,18 +43,20 @@ static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
     load::load(include_str!("specs.yaml")).unwrap_or_else(|e| panic!("specs.yaml: {e}"))
 });
 
-/// The spec warpllm has for a `model_str` such as `"openai/gpt-5.6"`.
+/// What warpllm knows about a `model_str` such as `"openai/gpt-5.6"`: the
+/// provider that serves it, and the model itself.
 ///
-/// The most specific entry wins: an exact key first, then the `*` of the
-/// namespace the name sits directly in. Nothing routes on a guess beyond
-/// that — a name no entry claims is an error rather than a fallback, so a typo
-/// cannot reach a provider as a live request, and that includes a bare name
-/// with no `/`, since silently assuming OpenAI becomes a footgun once many
-/// providers exist.
+/// Two rows rather than one merged spec, because the roster keeps them at two
+/// levels — how the API is reached and what it serves is the provider's, the
+/// upstream name and the published limits are the model's. Nothing is copied
+/// between them, so a provider's transport is stated once no matter how many
+/// models it serves.
 ///
-/// A wildcard is the one deliberate hole in that, and only for namespaces that
-/// opted in by declaring a `*`. Under one of those a typo IS routable, which is
-/// the trade the roster makes knowingly — see [`ModelSpec::is_wildcard`].
+/// The key matches exactly or not at all. Nothing routes on a guess — no
+/// pattern, no catch-all, no fallback — so a name no entry claims is an error,
+/// and a typo cannot reach a provider as a live, billed request. That includes
+/// a bare name with no `/`, since silently assuming OpenAI becomes a footgun
+/// once many providers exist.
 ///
 /// # Errors
 ///
@@ -63,123 +65,107 @@ static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
 /// # Examples
 ///
 /// ```
-/// let spec = warpllm::model_spec("openai/gpt-5.6")?;
-/// assert_eq!(spec.provider(), "openai");
-/// assert!(spec.capabilities().supports_api(warpllm::Api::ChatCompletions));
+/// let (provider, model) = warpllm::fetch_model("openai/gpt-5.6")?;
+/// assert_eq!(provider.name(), "openai");
+/// assert!(provider.supports_api(warpllm::Api::ChatCompletions));
+/// assert_eq!(model.model(), "gpt-5.6");
 ///
-/// // A name nobody registered, under a namespace with no `*`, is an error.
-/// assert!(warpllm::model_spec("openai/nonexistent").is_err());
+/// // A name nobody registered is an error, never a guess.
+/// assert!(warpllm::fetch_model("openai/nonexistent").is_err());
 /// # Ok::<(), warpllm::Error>(())
 /// ```
-pub fn model_spec(model_str: &str) -> Result<&'static ModelSpec> {
+pub fn fetch_model(model_str: &str) -> Result<(&'static ProviderSpec, &'static ModelSpec)> {
     resolve(&REGISTRY, model_str).ok_or_else(|| Error::InvalidModel {
         given: model_str.to_string(),
     })
 }
 
-/// Exact key, else the wildcard of the namespace directly above.
+/// The model row filed under `model_str`, and the provider row it names.
 ///
-/// Split out from [`model_spec`] so the matching can be tested against a
+/// One hash lookup, then a second. There is no second chance at the first: a
+/// key the table does not hold is a model warpllm does not serve, and the
+/// caller hears that rather than a provider hearing a guess.
+///
+/// Split out from [`fetch_model`] so the matching can be tested against a
 /// fixture roster rather than only the shipped one.
-fn resolve<'a>(registry: &'a Registry, model_str: &str) -> Option<&'a ModelSpec> {
-    // A `*` in a REQUEST is never part of a name. Without this a caller could
-    // address a wildcard entry by its own key and ship `*` upstream as the
-    // model name.
-    if model_str.contains(load::WILDCARD) {
-        return None;
-    }
-    if let Some(spec) = registry.get(model_str) {
-        return Some(spec);
-    }
-    // One level, never a walk: `openai/org/x` may fall back to `openai/org/*`
-    // and never to `openai/*`, so a nested namespace cannot be swallowed by a
-    // wildcard declared above it.
-    let (namespace, name) = model_str.rsplit_once('/')?;
-    if name.is_empty() {
-        return None; // a namespace key is merge material, not a model
-    }
-    registry.get(&format!("{namespace}/{}", load::WILDCARD))
+fn resolve<'a>(
+    registry: &'a Registry,
+    model_str: &str,
+) -> Option<(&'a ProviderSpec, &'a ModelSpec)> {
+    let model = registry.models.get(model_str)?;
+    let provider = registry
+        .providers
+        .get(&model.provider)
+        .expect("load registers a provider for every model it holds");
+    Some((provider, model))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::testing::{clean, keys, with};
+    use super::testing::{clean, keys, providers, with};
     use super::*;
     use crate::protocol::{Api, Protocol};
 
     // ------------------------------------------------------------- matching
 
-    /// The rule the roster documents: an exact entry beats the wildcard that
-    /// would otherwise have served the same name.
+    /// The rule the roster documents: a key matches its own entry or nothing
+    /// at all, and what ships upstream is that entry's name.
     #[test]
-    fn an_exact_entry_beats_a_wildcard() {
+    fn a_key_matches_its_own_entry_or_nothing() {
         let registry = clean(&with(
-            "  demo/*: {}\n  demo/pinned:\n    model: pinned-2024\n",
+            "      demo/pinned:\n        model: pinned-2024\n      demo/plain: {}\n",
         ));
-        let exact = resolve(&registry, "demo/pinned").unwrap();
-        assert!(!exact.is_wildcard());
-        assert_eq!(exact.wire_model("demo/pinned"), "pinned-2024");
-
-        let matched = resolve(&registry, "demo/anything-else").unwrap();
-        assert!(matched.is_wildcard());
-        assert_eq!(matched.wire_model("demo/anything-else"), "anything-else");
-    }
-
-    /// Without a `*` the registry stays closed: an unlisted name is an error.
-    #[test]
-    fn a_namespace_without_a_wildcard_rejects_unlisted_names() {
-        let registry = clean(&with("  demo/plain: {}\n"));
-        assert!(resolve(&registry, "demo/plain").is_some());
-        assert!(resolve(&registry, "demo/unlisted").is_none());
-    }
-
-    /// A wildcard matches exactly one segment. A nested name falls back to ITS
-    /// namespace's `*` and to nothing else, so `demo/*` cannot quietly serve
-    /// everything below `demo/org/`.
-    #[test]
-    fn a_wildcard_matches_one_segment_and_does_not_cross_a_slash() {
-        let registry = clean(&with(
-            "  demo/*: {}\n  demo/org/:\n    env_api_key: DEMO_API_KEY\n  demo/org/*: {}\n",
-        ));
-        assert!(resolve(&registry, "demo/anything").unwrap().is_wildcard());
-        assert!(resolve(&registry, "demo/org/thing").unwrap().is_wildcard());
         assert_eq!(
-            resolve(&registry, "demo/org/thing")
-                .unwrap()
-                .wire_model("demo/org/thing"),
-            "thing"
+            resolve(&registry, "demo/pinned").unwrap().1.model(),
+            "pinned-2024"
         );
-        // Three levels deep, and only `demo/a/*` could serve it.
-        assert!(resolve(&registry, "demo/a/b").is_none());
+        assert_eq!(resolve(&registry, "demo/plain").unwrap().1.model(), "plain");
+        // One character off, and there is nothing to fall back to.
+        assert!(resolve(&registry, "demo/pinnedd").is_none());
+        assert!(resolve(&registry, "demo/PLAIN").is_none());
     }
 
-    /// A nested name with no wildcard of its own gets nothing, even when an
-    /// outer namespace has one.
+    /// Whichever entry matched, the provider row comes back with it — that is
+    /// the whole point of handing back both halves.
     #[test]
-    fn an_outer_wildcard_does_not_serve_a_nested_name() {
-        let registry = clean(&with("  demo/*: {}\n  demo/org/: {}\n  demo/org/one: {}\n"));
-        assert!(resolve(&registry, "demo/org/one").is_some());
-        assert!(
-            resolve(&registry, "demo/org/two").is_none(),
-            "`demo/*` reached across a `/`"
-        );
+    fn a_match_carries_its_provider() {
+        let registry = clean(&with("      demo/plain: {}\n"));
+        let (provider, _) = resolve(&registry, "demo/plain").unwrap();
+        assert_eq!(provider.name(), "demo");
+        assert_eq!(provider.base_url(), "https://api.demo.test/v1");
+        assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
     }
 
-    /// A wildcard entry is not addressable by its own key: `*` in a request is
-    /// never a name, and matching it would ship `*` upstream.
+    /// The registry is closed, so an unlisted name is an error — the whole
+    /// reason a typo cannot become a billed upstream request.
+    ///
+    /// A pattern is just another unlisted name. Nothing reads `*` as anything
+    /// but a character, so asking for one matches exactly as much as asking
+    /// for a misspelling: nothing.
     #[test]
-    fn a_request_naming_a_star_is_rejected() {
-        let registry = clean(&with("  demo/*: {}\n"));
-        for asked in ["demo/*", "demo/gpt-*", "*"] {
-            assert!(resolve(&registry, asked).is_none(), "matched `{asked}`");
+    fn an_unlisted_name_is_rejected() {
+        let registry = clean(&with("      demo/plain: {}\n"));
+        assert!(resolve(&registry, "demo/plain").is_some());
+        for unlisted in ["demo/unlisted", "demo/*", "demo/pl*", "*"] {
+            assert!(resolve(&registry, unlisted).is_none(), "`{unlisted}`");
         }
     }
 
-    /// A namespace is merge material. It is not in the table, and it must not
-    /// reach the wildcard beside it either.
+    /// A name grouped under a prefix is registered like any other, and the
+    /// grouping buys it no fallback.
     #[test]
-    fn a_namespace_key_is_not_routable_even_beside_a_wildcard() {
-        let registry = clean(&with("  demo/*: {}\n"));
+    fn a_grouped_name_matches_only_its_own_entry() {
+        let registry = clean(&with("      demo/org/one: {}\n      demo/plain: {}\n"));
+        assert!(resolve(&registry, "demo/org/one").is_some());
+        assert!(resolve(&registry, "demo/org/two").is_none());
+        assert!(resolve(&registry, "demo/org").is_none());
+    }
+
+    /// A provider is not a model. Its key names transport, and no request
+    /// routes to it.
+    #[test]
+    fn a_provider_name_is_not_routable() {
+        let registry = clean(&with("      demo/plain: {}\n"));
         assert!(resolve(&registry, "demo/").is_none());
         assert!(resolve(&registry, "demo").is_none());
     }
@@ -194,8 +180,10 @@ mod tests {
     fn the_shipped_registry_loads_and_lints() {
         let yaml = include_str!("specs.yaml");
         lint::check(yaml).unwrap_or_else(|e| panic!("specs.yaml: {e}"));
+        let registry = load::load(yaml).unwrap();
+        assert_eq!(providers(&registry), vec!["deepseek", "openai"]);
         assert_eq!(
-            keys(&load::load(yaml).unwrap()),
+            keys(&registry),
             vec![
                 "deepseek/deepseek-v4-flash",
                 "deepseek/deepseek-v4-pro",
@@ -209,47 +197,45 @@ mod tests {
 
     #[test]
     fn resolves_openai() {
-        let spec = model_spec("openai/gpt-5.6").unwrap();
-        assert_eq!(spec.provider(), "openai");
-        assert_eq!(spec.model(), "gpt-5.6");
+        let (provider, model) = fetch_model("openai/gpt-5.6").unwrap();
+        assert_eq!(provider.name(), "openai");
+        assert_eq!(provider.base_url(), "https://api.openai.com/v1");
+        assert_eq!(model.model(), "gpt-5.6");
     }
 
     #[test]
     fn resolves_deepseek() {
-        let spec = model_spec("deepseek/deepseek-v4-flash").unwrap();
-        assert_eq!(spec.provider(), "deepseek");
-        assert_eq!(spec.model(), "deepseek-v4-flash");
-        assert_eq!(spec.base_url(), "https://api.deepseek.com");
-        assert_eq!(spec.env_api_key(), Some("DEEPSEEK_API_KEY"));
-        assert_eq!(spec.protocol(), Protocol::OpenAiCompat);
+        let (provider, model) = fetch_model("deepseek/deepseek-v4-flash").unwrap();
+        assert_eq!(provider.name(), "deepseek");
+        assert_eq!(provider.base_url(), "https://api.deepseek.com");
+        assert_eq!(provider.env_api_key(), Some("DEEPSEEK_API_KEY"));
+        assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
+        assert_eq!(model.model(), "deepseek-v4-flash");
     }
 
-    /// The whole GPT-5.6 family is routable and takes its namespace's fields;
+    /// The whole GPT-5.6 family is routable and answered by one provider row;
     /// the entries exist only to register the names.
     #[test]
     fn the_gpt_5_6_family_is_registered() {
-        let base = model_spec("openai/gpt-5.6").unwrap();
-        for model in ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] {
-            let spec = model_spec(&format!("openai/{model}")).unwrap();
-            assert_eq!(spec.model(), model);
-            assert_eq!(spec.base_url(), base.base_url());
-            assert_eq!(spec.env_api_key(), base.env_api_key());
-            assert_eq!(
-                spec.capabilities().supported_apis(),
-                base.capabilities().supported_apis()
+        let (base, _) = fetch_model("openai/gpt-5.6").unwrap();
+        for name in ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] {
+            let (provider, model) = fetch_model(&format!("openai/{name}")).unwrap();
+            assert_eq!(model.model(), name);
+            assert!(
+                std::ptr::eq(provider, base),
+                "`{name}` got a second copy of its provider"
             );
         }
     }
 
+    /// API surfaces are the provider's claim, and differ between providers.
     #[test]
-    fn capabilities_resolve_for_the_addressed_model() {
-        let openai = model_spec("openai/gpt-5.6").unwrap().capabilities();
+    fn supported_apis_resolve_for_the_addressed_provider() {
+        let (openai, _) = fetch_model("openai/gpt-5.6").unwrap();
         assert!(openai.supports_api(Api::ChatCompletions));
         assert!(openai.supports_api(Api::Responses));
 
-        let deepseek = model_spec("deepseek/deepseek-v4-flash")
-            .unwrap()
-            .capabilities();
+        let (deepseek, _) = fetch_model("deepseek/deepseek-v4-flash").unwrap();
         assert!(deepseek.supports_api(Api::ChatCompletions));
         assert!(!deepseek.supports_api(Api::Responses));
     }
@@ -258,11 +244,11 @@ mod tests {
     /// so a new `specs.yaml` entry is covered automatically.
     #[test]
     fn registered_models_resolve_to_their_own_entry() {
-        assert!(!REGISTRY.specs.is_empty(), "the registry is empty");
-        for (model_str, spec) in &REGISTRY.specs {
-            let resolved = model_spec(model_str).unwrap();
+        assert!(!REGISTRY.models.is_empty(), "the registry is empty");
+        for (model_str, spec) in &REGISTRY.models {
+            let (provider, resolved) = fetch_model(model_str).unwrap();
             assert_eq!(resolved.model(), spec.model());
-            assert_eq!(resolved.base_url(), spec.base_url());
+            assert_eq!(provider.name(), spec.provider);
             assert_eq!(
                 resolved.capabilities().max_concurrent_requests(),
                 spec.capabilities().max_concurrent_requests()
@@ -270,66 +256,65 @@ mod tests {
         }
     }
 
-    /// The leaf-level inheritance model entries rely on: the V4 pair restates
-    /// one capability and keeps everything else from the DeepSeek namespace.
+    /// What per-model entries are FOR: the V4 pair shares one provider row and
+    /// differs only in the limit that motivated splitting them.
     #[test]
-    fn model_entries_inherit_every_field_they_do_not_restate() {
-        let flash = model_spec("deepseek/deepseek-v4-flash").unwrap();
-        let pro = model_spec("deepseek/deepseek-v4-pro").unwrap();
-        assert_eq!(flash.base_url(), pro.base_url());
-        assert_eq!(flash.env_api_key(), pro.env_api_key());
-        assert_eq!(flash.protocol(), pro.protocol());
-        assert_eq!(
-            flash.capabilities().supported_apis(),
-            pro.capabilities().supported_apis()
-        );
+    fn model_entries_carry_only_what_differs() {
+        let (flash_provider, flash) = fetch_model("deepseek/deepseek-v4-flash").unwrap();
+        let (pro_provider, pro) = fetch_model("deepseek/deepseek-v4-pro").unwrap();
+        assert!(std::ptr::eq(flash_provider, pro_provider));
         // The divergence that motivated per-model entries: 5x the concurrency.
         assert_eq!(flash.capabilities().max_concurrent_requests(), Some(2500));
         assert_eq!(pro.capabilities().max_concurrent_requests(), Some(500));
     }
 
-    /// The shipped roster declares no `*`, so every provider in it is closed:
-    /// an unlisted name is an error, not a fallback. `openai/*` is in the list
-    /// because a request may never name a wildcard directly.
+    /// The registry is closed: an unlisted name is an error, not a fallback.
+    /// `openai/*` is in the list because a pattern matches nothing either.
     #[test]
     fn unregistered_models_are_rejected() {
         for model_str in ["openai/gpt-4o", "deepseek/deepseek-v5", "openai/*"] {
-            let msg = model_spec(model_str).unwrap_err().to_string();
+            let msg = fetch_model(model_str).unwrap_err().to_string();
             assert!(msg.contains(model_str), "{msg}");
             assert!(msg.contains("no registered model spec"), "{msg}");
         }
     }
 
-    /// A slash-containing name needs an entry or a `*` in its own namespace,
-    /// and the registry has neither for `openai/org/`.
+    /// A slash-containing name needs an entry of its own, and the registry
+    /// has none under `openai/org/`.
     #[test]
-    fn unregistered_namespaces_are_rejected() {
-        assert!(model_spec("openai/org/custom-model").is_err());
+    fn unregistered_grouped_names_are_rejected() {
+        assert!(fetch_model("openai/org/custom-model").is_err());
     }
 
     #[test]
     fn rejects_bare_model() {
-        let msg = model_spec("gpt-5.6").unwrap_err().to_string();
+        let msg = fetch_model("gpt-5.6").unwrap_err().to_string();
         assert!(msg.contains("no registered model spec"), "{msg}");
     }
 
     #[test]
     fn rejects_unknown_provider() {
-        let msg = model_spec("mistral/large").unwrap_err().to_string();
+        let msg = fetch_model("mistral/large").unwrap_err().to_string();
         assert!(msg.contains("mistral/large"), "{msg}");
         assert!(msg.contains("no registered model spec"), "{msg}");
     }
 
-    /// A namespace key is merge material in the YAML and never reaches the
-    /// table, so it cannot be routed to either.
+    /// A provider key is transport, not a model, so it cannot be routed to.
     #[test]
-    fn rejects_a_namespace_key() {
-        assert!(model_spec("openai/").is_err());
+    fn rejects_a_provider_key() {
+        assert!(fetch_model("openai/").is_err());
+        assert!(fetch_model("openai").is_err());
     }
 
-    /// Nothing but routable entries reaches the table: no namespace, every key
-    /// carrying a provider segment, any `*` a whole final segment, and every
-    /// row agreeing with the key it is filed under.
+    /// Nothing but routable entries reaches the model table: every key
+    /// carrying the provider it is filed under, every row agreeing with the
+    /// key it sits at, and no key reaching for a pattern.
+    ///
+    /// That last one is asserted HERE and nowhere else. `load` reads a key
+    /// literally and has no opinion about `*`, so `openai/*` would register a
+    /// model named `*` and quietly serve nothing — this is what keeps the
+    /// shipped file from acquiring one, whether by a stale roster or by
+    /// somebody expecting the catch-all warpllm used to have.
     ///
     /// The fixtures elsewhere assert the same over hand-written rosters. This
     /// asserts it over [`REGISTRY`], which is the table a caller actually
@@ -337,28 +322,17 @@ mod tests {
     /// built a bad table would fail here and only here.
     #[test]
     fn the_table_holds_only_routable_entries() {
-        for (model_str, spec) in &REGISTRY.specs {
-            assert!(
-                !model_str.ends_with('/'),
-                "namespace `{model_str}` is routable"
-            );
+        for (model_str, spec) in &REGISTRY.models {
             let (provider, name) = model_str
                 .split_once('/')
                 .unwrap_or_else(|| panic!("`{model_str}` names no provider"));
-            assert_eq!(spec.provider(), provider, "`{model_str}`");
+            assert_eq!(spec.provider, provider, "`{model_str}`");
+            assert!(REGISTRY.providers.contains_key(provider), "`{model_str}`");
             assert!(!name.is_empty(), "`{model_str}` names no model");
-            assert_eq!(
-                spec.is_wildcard(),
-                name.rsplit('/').next() == Some("*"),
-                "`{model_str}`: wildcard flag disagrees with the key"
+            assert!(
+                !model_str.contains('*') && !spec.model().contains('*'),
+                "`{model_str}`: a `*` reached the table, which matches nothing"
             );
-            // A `*` is only ever the whole final segment.
-            for segment in name.split('/') {
-                assert!(
-                    !segment.contains('*') || segment == "*",
-                    "`{model_str}`: `{segment}` is neither a name nor a wildcard"
-                );
-            }
         }
     }
 }

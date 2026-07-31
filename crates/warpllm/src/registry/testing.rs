@@ -1,47 +1,47 @@
 //! Roster fixtures shared by the three modules' tests.
 //!
-//! Here rather than duplicated because the line numbers matter: `NAMESPACE` is
-//! nine lines, so a case that appends entries knows its first one lands on line
-//! 10 — which is what the sort check's error message is asserted against.
+//! Here rather than duplicated because the line numbers matter: [`PROVIDER`]
+//! is nine lines and ends on its `models:` key, so a case that appends model
+//! entries knows its first one lands on line 10 — which is what the sort
+//! check's error message is asserted against.
 
 use super::load::load;
 use super::types::Registry;
 
-/// A namespace with two APIs and no models — the base most cases diverge
-/// from. Cases append their own entries, already indented two spaces and sorted
-/// after `demo/`, so appended keys start at line 10.
-pub(super) const NAMESPACE: &str = "\
-specs:
-  demo/:
+/// One provider serving two APIs, with no models yet — the base most cases
+/// diverge from. Cases append their own model entries, already indented six
+/// spaces, so appended keys start at line 10.
+pub(super) const PROVIDER: &str = "\
+providers:
+  demo:
     base_url: \"https://api.demo.test/v1\"
     env_api_key: DEMO_API_KEY
     protocol: openai_compat
-    capabilities:
-      supported_apis:
-        - chat_completions
-        - responses
+    supported_apis:
+      - chat_completions
+      - responses
+    models:
 ";
 
-/// Nesting at two depths, a namespace at each level, and a sibling outside the
-/// inner one so inheritance can be shown NOT to leak sideways.
-pub(super) const NESTED: &str = "\
-specs:
-  demo/:
-    base_url: \"https://api.demo.test/v1\"
-    env_api_key: DEMO_API_KEY
+/// A second provider, complete with a model, sorted after `demo` so it can be
+/// appended to a [`with`] roster without tripping the order check.
+///
+/// Written without the `\` line continuation the fixture above uses: that
+/// escape swallows the following line's indentation, and this block's two
+/// leading spaces are what make it a sibling of `demo` rather than a
+/// top-level key.
+pub(super) const OTHER_PROVIDER: &str = "  other:
+    base_url: \"https://api.other.test\"
+    env_api_key: OTHER_API_KEY
     protocol: openai_compat
-    capabilities:
-      supported_apis:
-        - chat_completions
-  demo/plain: {}
-  demo/v1/:
-    capabilities:
-      max_input_tokens: 128
-  demo/v1/model-abc: {}
+    supported_apis:
+      - chat_completions
+    models:
+      other/plain: {}
 ";
 
-pub(super) fn with(entries: &str) -> String {
-    format!("{NAMESPACE}{entries}")
+pub(super) fn with(models: &str) -> String {
+    format!("{PROVIDER}{models}")
 }
 
 /// A roster expected to be valid AND clean, resolved. Anything the shipped file
@@ -52,10 +52,18 @@ pub(super) fn clean(yaml: &str) -> Registry {
     load(yaml).unwrap_or_else(|e| panic!("{e}"))
 }
 
-/// Sorted, because a `Registry` is a `HashMap` and an assertion on its contents
-/// must not depend on iteration order.
+/// Sorted, because the tables are `HashMap`s and an assertion on their
+/// contents must not depend on iteration order.
 pub(super) fn keys(registry: &Registry) -> Vec<&str> {
-    let mut keys: Vec<&str> = registry.specs.keys().map(String::as_str).collect();
+    sorted(registry.models.keys())
+}
+
+pub(super) fn providers(registry: &Registry) -> Vec<&str> {
+    sorted(registry.providers.keys())
+}
+
+fn sorted<'a>(keys: impl Iterator<Item = &'a String>) -> Vec<&'a str> {
+    let mut keys: Vec<&str> = keys.map(String::as_str).collect();
     keys.sort_unstable();
     keys
 }
