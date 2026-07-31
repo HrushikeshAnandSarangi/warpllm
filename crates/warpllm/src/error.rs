@@ -11,11 +11,12 @@ pub enum Error {
         provider: &'static str,
         /// The variable to set, when the registry names one for this model.
         ///
-        /// `None` is not an oversight: an entry may declare no
-        /// `env_api_key` at all, meaning it authenticates only with a key the
-        /// caller supplies. The wire form keeps one `missing_api_key` code
-        /// either way — the failure is the same, only the remedy differs — and
-        /// carries `env_var: null` for that case.
+        /// `None` means the entry declares no `env_api_key`, and since the
+        /// environment is the only key source, such an entry cannot be
+        /// authenticated at all — the remedy is a roster edit, not a shell one.
+        /// The wire form keeps one `missing_api_key` code either way — the
+        /// failure is the same, only the remedy differs — and carries
+        /// `env_var: null` for that case.
         env_var: Option<&'static str>,
     },
     #[error("{provider} returned HTTP {status}: {message}")]
@@ -47,8 +48,8 @@ fn missing_api_key_message(provider: &str, env_var: Option<&str>) -> String {
     match env_var {
         Some(var) => format!("missing API key for {provider}: set the {var} environment variable"),
         None => format!(
-            "missing API key for {provider}: it names no default environment variable, \
-             so the key has to be passed explicitly"
+            "missing API key for {provider}: its registry entry names no environment variable \
+             to read one from"
         ),
     }
 }

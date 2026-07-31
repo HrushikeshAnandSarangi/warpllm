@@ -5,14 +5,14 @@ mod config;
 mod error;
 mod http;
 mod normalized;
-mod protocol;
 mod registry;
 
-pub mod types;
+pub mod protocol;
 
 pub use client::Client;
 pub use config::ClientConfig;
 pub use error::{Error, Result};
+pub use protocol::openai_compat::chat_completions::types::*;
 pub use protocol::{Api, Protocol};
 /// The registry's public face: a provider, a model, and the lookup that hands
 /// back one of each. `registry` itself stays private — the roster, the schema,
@@ -21,7 +21,6 @@ pub use protocol::{Api, Protocol};
 /// Read-only by construction: every field is private and there is no public
 /// constructor, so [`fetch_model`] is the way to obtain either half.
 pub use registry::{Capabilities, ModelSpec, ProviderSpec, fetch_model};
-pub use types::openai_compat::chat::completions::*;
 
 /// Returns the warpllm version.
 ///

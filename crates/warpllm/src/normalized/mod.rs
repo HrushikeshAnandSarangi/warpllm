@@ -10,7 +10,13 @@
 //!
 //! The serde-derived canonical JSON form is UNSTABLE and internal-only —
 //! it exists for tests, logging, and future caching, not as a wire contract.
+//!
+//! This module also PERFORMS those conversions: [`types`] holds the canonical
+//! shapes, and one sibling per protocol holds the translation to and from that
+//! protocol's wire shapes — [`crate::protocol`] owns the shapes themselves and
+//! the transport, and knows nothing about this layer.
 
+pub(crate) mod openai_compat;
 pub(crate) mod types;
 
 pub(crate) use types::*;

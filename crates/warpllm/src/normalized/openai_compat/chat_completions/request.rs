@@ -4,12 +4,13 @@
 use serde_json::Value;
 
 use crate::error::{Error, Result};
-use crate::normalized::{self, ContentBlock, Dialect, IngestSource, ProviderExt};
-use crate::types::openai_compat::chat::completions::{
-    ChatCompletionRequestMessage, CreateChatCompletionRequest, UnknownFields,
+use crate::normalized::{self, ContentBlock, IngestSource};
+use crate::protocol::Protocol;
+use crate::protocol::openai_compat::chat_completions::types::{
+    ChatCompletionRequestMessage, CreateChatCompletionRequest,
 };
 
-use super::{NAMESPACE, merged_ext, role_from_wire, role_to_wire};
+use super::super::{merged_ext, namespaced, role_from_wire, role_to_wire};
 
 /// Permissive and infallible: capture, don't validate. `model` is the
 /// prefix-stripped name from `parse_model`; `stream` is resolved before
@@ -48,7 +49,7 @@ pub(crate) fn ingest_request(
         stream: stream.unwrap_or(false),
         ext: namespaced(unknown_fields),
         source: Some(IngestSource {
-            dialect: Dialect::OpenAiCompat,
+            protocol: Protocol::OpenAiCompat,
             body,
         }),
         ..Default::default()
@@ -156,19 +157,12 @@ fn render_message(
     })
 }
 
-fn namespaced(fields: UnknownFields) -> ProviderExt {
-    let mut ext = ProviderExt::new();
-    if !fields.is_empty() {
-        ext.insert(NAMESPACE.into(), Value::Object(fields));
-    }
-    ext
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::normalized::ProviderExt;
 
     fn full_wire_request() -> CreateChatCompletionRequest {
         let mut request = CreateChatCompletionRequest {
@@ -283,7 +277,7 @@ mod tests {
         let original = full_wire_request();
         let normalized = ingest_request(original.clone(), "gpt-5.6");
         let source = normalized.source.as_ref().unwrap();
-        assert_eq!(source.dialect, Dialect::OpenAiCompat);
+        assert_eq!(source.protocol, Protocol::OpenAiCompat);
         assert_eq!(source.body, serde_json::to_value(&original).unwrap());
     }
 

@@ -31,19 +31,10 @@ where
     assert!(checked > 0, "no fixtures found in {dir}");
 }
 
-/// Downstream code imported `warpllm::types::openai::...` before the
-/// `openai_compat` rename; the deprecated alias must keep it compiling.
-#[test]
-#[allow(deprecated)]
-fn deprecated_openai_module_alias_still_resolves() {
-    let _request: warpllm::types::openai::chat::completions::CreateChatCompletionRequest =
-        Default::default();
-}
-
 #[test]
 fn fixtures_round_trip_losslessly() {
     assert_fixtures_round_trip::<CreateChatCompletionResponse>(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/types/openai_compat/chat/completions/fixtures"
+        "/tests/protocol/openai_compat/chat_completions/fixtures"
     ));
 }

@@ -8,16 +8,15 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::normalized::{
-    self, ContentBlock, Dialect, FinishReason, IngestSource, ProviderExt, RawJson,
-};
-use crate::types::openai_compat::chat::completions::{
+use crate::normalized::{self, ContentBlock, FinishReason, IngestSource, RawJson};
+use crate::protocol::Protocol;
+use crate::protocol::openai_compat::chat_completions::types::{
     ChatCompletionMessageToolCall, ChatCompletionMessageToolCallUnion,
     ChatCompletionResponseMessage, Choice, CompletionUsage, CreateChatCompletionResponse, Function,
     UnknownFields,
 };
 
-use super::{NAMESPACE, merged_ext, role_from_wire, role_to_wire};
+use super::super::{merged_ext, namespaced, role_from_wire, role_to_wire};
 
 /// Permissive and infallible; the exhaustive destructures at every level
 /// make dropping a newly-typed wire field a compile error.
@@ -56,7 +55,7 @@ pub(crate) fn ingest_response(response: CreateChatCompletionResponse) -> normali
         usage: usage.map(ingest_usage),
         ext: namespaced(compat),
         source: Some(IngestSource {
-            dialect: Dialect::OpenAiCompat,
+            protocol: Protocol::OpenAiCompat,
             body,
         }),
     }
@@ -364,14 +363,6 @@ fn object(value: Value) -> UnknownFields {
     }
 }
 
-fn namespaced(fields: UnknownFields) -> ProviderExt {
-    let mut ext = ProviderExt::new();
-    if !fields.is_empty() {
-        ext.insert(NAMESPACE.into(), Value::Object(fields));
-    }
-    ext
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -631,7 +622,7 @@ mod tests {
         let wire = parse(maximal_body());
         let normalized = ingest_response(wire.clone());
         let source = normalized.source.as_ref().unwrap();
-        assert_eq!(source.dialect, Dialect::OpenAiCompat);
+        assert_eq!(source.protocol, Protocol::OpenAiCompat);
         assert_eq!(source.body, serde_json::to_value(&wire).unwrap());
     }
 }

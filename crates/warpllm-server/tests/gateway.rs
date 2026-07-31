@@ -1,6 +1,7 @@
 //! End-to-end gateway tests: a real axum server on an ephemeral port in
 //! front of a wiremock "OpenAI" upstream.
 
+use std::future::Future;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
@@ -8,16 +9,33 @@ use warpllm_server::{AppState, router};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// The gateway-held provider key, placed in the environment by
+/// [`with_gateway_key`] — the client's only key source.
+const GATEWAY_KEY: &str = "sk-gateway";
+
+/// Runs `body` with the provider key in the environment.
+///
+/// Only the tests that actually reach the upstream need this: everything else
+/// here fails before key resolution (bad route, `stream: true`, unknown model),
+/// so they stay `#[tokio::test]` and keep running in parallel.
+///
+/// Env mutation is process-global and `unsafe` since edition 2024, hence
+/// temp-env's locking helper and a runtime per test rather than
+/// `async_with_vars`, which cannot hold the lock across an await.
+fn with_gateway_key<F: Future<Output = ()>>(body: F) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    temp_env::with_var("OPENAI_API_KEY", Some(GATEWAY_KEY), || {
+        runtime.block_on(body)
+    });
+}
+
 /// Serves the gateway against the given upstream, returning its base URL.
 async fn spawn_app(upstream_uri: &str) -> String {
     let client = warpllm::Client::new(warpllm::ClientConfig {
         base_url: Some(upstream_uri.to_string()),
         timeout_secs: Some(5),
     })
-    .unwrap()
-    // Deterministic gateway-held key: tests must not depend on the real
-    // OPENAI_API_KEY env read inside Client::new.
-    .with_api_key("sk-gateway");
+    .unwrap();
     let app = router(AppState {
         client: Arc::new(client),
     });
@@ -51,33 +69,35 @@ fn completion_body() -> Value {
     })
 }
 
-#[tokio::test]
-async fn non_stream_happy_path_uses_gateway_key_and_echoes_model() {
-    let upstream = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .and(header("authorization", "Bearer sk-gateway"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(completion_body()))
-        .expect(1)
-        .mount(&upstream)
-        .await;
-    let gateway = spawn_app(&upstream.uri()).await;
+#[test]
+fn non_stream_happy_path_uses_gateway_key_and_echoes_model() {
+    with_gateway_key(async {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(header("authorization", format!("Bearer {GATEWAY_KEY}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(completion_body()))
+            .expect(1)
+            .mount(&upstream)
+            .await;
+        let gateway = spawn_app(&upstream.uri()).await;
 
-    // No Authorization header needed: the gateway holds the provider key.
-    let response = reqwest::Client::new()
-        .post(format!("{gateway}/v1/chat/completions"))
-        .json(&request_body())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["model"], "openai/gpt-5.6");
-    assert_eq!(body["choices"][0]["message"]["content"], "Hello there!");
+        // No Authorization header needed: the gateway holds the provider key.
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/v1/chat/completions"))
+            .json(&request_body())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["model"], "openai/gpt-5.6");
+        assert_eq!(body["choices"][0]["message"]["content"], "Hello there!");
 
-    let sent: Value =
-        serde_json::from_slice(&upstream.received_requests().await.unwrap()[0].body).unwrap();
-    assert_eq!(sent["model"], "gpt-5.6");
+        let sent: Value =
+            serde_json::from_slice(&upstream.received_requests().await.unwrap()[0].body).unwrap();
+        assert_eq!(sent["model"], "gpt-5.6");
+    });
 }
 
 #[tokio::test]
@@ -94,50 +114,54 @@ async fn unprefixed_route_is_404() {
     assert_eq!(response.status(), 404);
 }
 
-#[tokio::test]
-async fn caller_bearer_is_ignored_never_forwarded() {
-    let upstream = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(header("authorization", "Bearer sk-gateway"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(completion_body()))
-        .expect(1)
-        .mount(&upstream)
-        .await;
-    let gateway = spawn_app(&upstream.uri()).await;
+#[test]
+fn caller_bearer_is_ignored_never_forwarded() {
+    with_gateway_key(async {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(header("authorization", format!("Bearer {GATEWAY_KEY}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(completion_body()))
+            .expect(1)
+            .mount(&upstream)
+            .await;
+        let gateway = spawn_app(&upstream.uri()).await;
 
-    // The caller sends its own bearer; the upstream must still see the
-    // gateway's key (the mock 404s any other Authorization value).
-    let response = reqwest::Client::new()
-        .post(format!("{gateway}/v1/chat/completions"))
-        .bearer_auth("sk-caller")
-        .json(&request_body())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
+        // The caller sends its own bearer; the upstream must still see the
+        // gateway's key (the mock 404s any other Authorization value).
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/v1/chat/completions"))
+            .bearer_auth("sk-caller")
+            .json(&request_body())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+    });
 }
 
-#[tokio::test]
-async fn upstream_status_and_error_type_pass_through() {
-    let upstream = MockServer::start().await;
-    Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
-            "error": {"message": "Rate limit reached", "type": "rate_limit_exceeded"}
-        })))
-        .mount(&upstream)
-        .await;
-    let gateway = spawn_app(&upstream.uri()).await;
+#[test]
+fn upstream_status_and_error_type_pass_through() {
+    with_gateway_key(async {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+                "error": {"message": "Rate limit reached", "type": "rate_limit_exceeded"}
+            })))
+            .mount(&upstream)
+            .await;
+        let gateway = spawn_app(&upstream.uri()).await;
 
-    let response = reqwest::Client::new()
-        .post(format!("{gateway}/v1/chat/completions"))
-        .json(&request_body())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 429);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["error"]["code"], "provider_error");
-    assert_eq!(body["error"]["type"], "rate_limit_exceeded");
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/v1/chat/completions"))
+            .json(&request_body())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 429);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "provider_error");
+        assert_eq!(body["error"]["type"], "rate_limit_exceeded");
+    });
 }
 
 #[tokio::test]

@@ -21,3 +21,6 @@ tracing-subscriber.workspace = true
 [dev-dependencies]
 reqwest.workspace = true
 wiremock = "0.6"
+# The gateway's client reads provider keys from the environment, so the tests
+# that reach an upstream have to set one; temp-env serializes the unsafe write.
+temp-env = "0.3"

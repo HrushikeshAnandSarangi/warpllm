@@ -121,8 +121,9 @@ pub(crate) enum ResponseFormat {
 mod tests {
     use serde_json::json;
 
-    use super::super::{ContentBlock, Dialect, Role};
+    use super::super::{ContentBlock, Role};
     use super::*;
+    use crate::protocol::Protocol;
 
     #[test]
     fn chat_request_round_trips_and_skips_source() {
@@ -143,7 +144,7 @@ mod tests {
             },
             stream: false,
             source: Some(IngestSource {
-                dialect: Dialect::OpenAiCompat,
+                protocol: Protocol::OpenAiCompat,
                 body: json!({"model": "openai/gpt-5.6"}),
             }),
             ..Default::default()

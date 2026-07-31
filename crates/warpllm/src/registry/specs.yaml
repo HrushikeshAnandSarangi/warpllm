@@ -68,18 +68,19 @@
 # ---------------
 # - `base_url` includes any version prefix (e.g. `/v1`) and carries no
 #   trailing slash: endpoints append their own path (`/chat/completions`).
-# - `env_api_key` names the environment variable warpllm reads the API key from
-#   BY DEFAULT. It is not the only source and not a secret store: an explicit
-#   key already wins over it (`Client::with_api_key`), and client configuration
-#   will be able to override it per provider. Two providers may not share one —
-#   the tests reject it, because a shared variable silently authenticates one
-#   provider with the other's credentials.
+# - `env_api_key` names the environment variable warpllm reads the API key from.
+#   It is the only source today and not a secret store; per-provider overrides
+#   in client configuration are a later addition, added when an embedder that
+#   keeps keys elsewhere turns up. Two providers may not share one — the tests
+#   reject it, because a shared variable silently authenticates one provider
+#   with the other's credentials.
 #
-#   OPTIONAL, and the only provider field that is. Omit it entirely for a
-#   provider whose key is per-caller rather than per-deployment: it then
-#   authenticates only with an explicitly supplied key, and asking for one it
-#   has not got says so instead of naming a variable nothing reads. An empty
-#   string is rejected — that is a half-finished edit, not an opt-out.
+#   OPTIONAL, and the only provider field that is. Omitting it means the
+#   provider cannot be authenticated at all: a request routed to one fails
+#   saying so instead of naming a variable nothing reads. That is allowed so an
+#   entry can land before its key plumbing does — it is not a way to opt into
+#   per-caller keys. An empty string is rejected — that is a half-finished edit,
+#   not an opt-out.
 # - `protocol` names the wire format spoken. One of: openai_compat.
 # - `supported_apis` names the API surfaces this provider serves. These are
 #   CAPABILITIES, not URL paths: which path an API is reached at belongs to the

@@ -67,13 +67,14 @@ impl ProviderSpec {
         &self.base_url
     }
 
-    /// The environment variable warpllm reads this provider's API key from by
-    /// default, if the roster names one.
+    /// The environment variable warpllm reads this provider's API key from, if
+    /// the roster names one. Currently the only key source there is.
     ///
-    /// `None` is a real answer, not a gap: some providers authenticate only
-    /// with a key the caller supplies, so there is no variable to read and
-    /// nothing to suggest setting. Either way this is never the only source —
-    /// an explicit key (`Client::with_api_key`) wins over it.
+    /// `None` therefore means this provider cannot be authenticated: there is
+    /// no variable to read and nothing to suggest setting. The roster still
+    /// accepts it — a provider entry can land before the key plumbing it needs
+    /// does — and a request to one says exactly that rather than naming a
+    /// variable nothing reads.
     pub fn env_api_key(&self) -> Option<&str> {
         self.env_api_key.as_deref()
     }
@@ -146,7 +147,7 @@ impl ModelSpec {
 ///
 /// No `Default`, deliberately. A derived `Default` on a public struct is
 /// public too, and the loader's blank starting point is not something a caller
-/// should be able to conjure — so it gets [`Capabilities::blank`], which is
+/// should be able to conjure — so it gets `Capabilities::blank`, which is
 /// `pub(crate)` and therefore unreachable from outside.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -13,20 +13,14 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::protocol::Protocol;
+
 /// Namespaced passthrough bags, keyed by dialect name (`"openai_compat"`)
 /// or provider name (`"deepseek"`). Renderers emit the dialect namespace
 /// only when the target speaks that dialect, then overlay the target
 /// provider's namespace — a field meant for one provider never leaks into
 /// another. Provider names shadowing dialect names are reserved.
 pub(crate) type ProviderExt = BTreeMap<String, Value>;
-
-/// A wire dialect a request can be ingested from or rendered to. One
-/// variant per wire format, not per provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Dialect {
-    OpenAiCompat,
-}
 
 /// Exact JSON text, never a parsed tree at rest.
 ///
@@ -69,7 +63,11 @@ impl RawJson {
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // staged: read once the passthrough fast path lands
 pub(crate) struct IngestSource {
-    pub dialect: Dialect,
+    /// The wire format this was ingested from. [`Protocol`] rather than a
+    /// separate `Dialect` enum: the name that keys the `ext` bags, the name the
+    /// registry YAML uses, and the name of the format are one string, so they
+    /// are one type.
+    pub protocol: Protocol,
     /// The inbound body as ingested — re-serialized from the typed wire
     /// form, NOT the original bytes: unknown-field order survives
     /// (preserve_order), but whitespace, numeric spelling, and typed-field

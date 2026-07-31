@@ -28,31 +28,12 @@ fn env_api_key_with_override_and_missing_key() {
                 .chat_completion(request("openai/gpt-5.6"))
                 .await
                 .unwrap();
-
-            // 2. with_api_key wins over the env key.
-            let server = MockServer::start().await;
-            Mock::given(method("POST"))
-                .and(header("authorization", "Bearer sk-explicit"))
-                .respond_with(ResponseTemplate::new(200).set_body_json(openai_completion_body()))
-                .expect(1)
-                .mount(&server)
-                .await;
-            let client = Client::new(ClientConfig {
-                base_url: Some(server.uri()),
-                ..Default::default()
-            })
-            .unwrap()
-            .with_api_key("sk-explicit");
-            client
-                .chat_completion(request("openai/gpt-5.6"))
-                .await
-                .unwrap();
         });
     });
 
     temp_env::with_var("OPENAI_API_KEY", None::<&str>, || {
         runtime.block_on(async {
-            // 3. Missing key errors at request time, naming the env var.
+            // 2. Missing key errors at request time, naming the env var.
             let client = Client::new(ClientConfig::default()).unwrap();
             let err = client
                 .chat_completion(request("openai/gpt-5.6"))

@@ -1794,6 +1794,7 @@ dependencies = [
  "clap",
  "reqwest",
  "serde_json",
+ "temp-env",
  "tokio",
  "tower-http",
  "tracing",

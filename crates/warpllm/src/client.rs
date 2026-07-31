@@ -4,18 +4,16 @@ use std::time::Duration;
 
 use crate::config::{ClientConfig, DEFAULT_TIMEOUT_SECS};
 use crate::error::{Error, Result};
-use crate::protocol;
-use crate::protocol::{Api, Protocol};
-use crate::registry::{ModelSpec, ProviderSpec, fetch_model};
-use crate::types::openai_compat::chat::completions::{
+use crate::normalized::openai_compat;
+use crate::protocol::openai_compat::chat_completions::types::{
     CreateChatCompletionRequest, CreateChatCompletionResponse,
 };
+use crate::protocol::{Api, Protocol};
+use crate::registry::{ProviderSpec, fetch_model};
 
 pub struct Client {
     http: reqwest::Client,
     config: ClientConfig,
-    /// `with_api_key` override; wins over every provider's env var.
-    api_key_override: Option<String>,
 }
 
 impl Client {
@@ -29,27 +27,7 @@ impl Client {
             ))
             .build()
             .map_err(|e| Error::InvalidInput(e.to_string()))?;
-        Ok(Self {
-            http,
-            config,
-            api_key_override: None,
-        })
-    }
-
-    /// A copy of this client that authenticates with `api_key` instead of
-    /// the environment's — for every provider. Cheap — the connection pool
-    /// is shared — so an embedder holding keys somewhere other than the
-    /// environment can call it per request.
-    ///
-    /// warpllm's own gateway does not: it holds the provider keys itself and
-    /// ignores the caller's `Authorization` header entirely.
-    #[must_use]
-    pub fn with_api_key(&self, api_key: impl Into<String>) -> Self {
-        Self {
-            http: self.http.clone(),
-            config: self.config.clone(),
-            api_key_override: Some(api_key.into()),
-        }
+        Ok(Self { http, config })
     }
 
     pub async fn chat_completion(
@@ -61,67 +39,46 @@ impl Client {
         }
         let requested_model = request.model.clone();
         let (provider, model) = fetch_model(&requested_model)?;
-        let api_key = self.api_key(provider)?;
-        let mut completion = match provider.protocol() {
-            Protocol::OpenAiCompat => {
-                self.openai_compat_chat(provider, model, &requested_model, request, &api_key)
-                    .await?
-            }
-        };
-        // Echo the caller's provider-prefixed string, not the upstream name.
-        completion.model = requested_model;
-        Ok(completion)
-    }
-
-    /// The OpenAI-compatible pipeline: ingest to the normalized form,
-    /// render for the provider, post, and convert the response back out.
-    ///
-    /// `&'static` specs — which is all [`fetch_model`] hands out — because the
-    /// errors below and the protocol layer both name a provider with a
-    /// `&'static str`, and a spec's accessors borrow from the spec.
-    async fn openai_compat_chat(
-        &self,
-        provider: &'static ProviderSpec,
-        model: &'static ModelSpec,
-        requested_model: &str,
-        request: CreateChatCompletionRequest,
-        api_key: &str,
-    ) -> Result<CreateChatCompletionResponse> {
-        use protocol::openai_compat::chat::completions as endpoint;
-
         if !provider.supports_api(Api::ChatCompletions) {
             return Err(Error::InvalidInput(format!(
-                "{}: {} does not serve chat completions",
+                "{}: {} does not serve chat_completions",
                 provider.name(),
                 requested_model
             )));
         }
-        // The ENTRY's name, not the caller's string: they differ whenever
+        let api_key = self.api_key(provider)?;
+
+        // Ingest answers to the dialect warpllm was CALLED with, which is
+        // openai_compat and only ever will be for this entrypoint. The ENTRY's
+        // model name goes in, not the caller's string: they differ whenever
         // warpllm's routing alias differs from the provider's own name.
-        let normalized = endpoint::ingest_request(request, model.model());
-        let wire = endpoint::render_request(&normalized, provider.name())?;
-        let wire_response = endpoint::post(
-            &self.http,
-            provider.name(),
-            self.base_url(provider),
-            api_key,
-            &wire,
-        )
-        .await?;
-        let response = endpoint::ingest_response(wire_response);
-        Ok(endpoint::render_response(&response, provider.name()))
+        let normalized = openai_compat::chat_completions::ingest_request(request, model.model());
+        // One arm per protocol, each `&ChatRequest -> ChatResponse`. Adding a
+        // protocol is a line here plus its own `exchange`.
+        let response = match provider.protocol() {
+            Protocol::OpenAiCompat => {
+                openai_compat::chat_completions::exchange(
+                    &normalized,
+                    &self.http,
+                    provider.name(),
+                    self.base_url(provider),
+                    &api_key,
+                )
+                .await?
+            }
+        };
+        let mut completion =
+            openai_compat::chat_completions::render_response(&response, provider.name());
+        // Echo the caller's provider-prefixed string, not the upstream echo.
+        completion.model = requested_model;
+        Ok(completion)
     }
 
-    /// An explicit key first, then the provider's own environment variable if
-    /// it names one.
-    ///
-    /// A provider with no `env_api_key` has no second source: it authenticates
-    /// only through [`Client::with_api_key`], and without one the error says
-    /// so rather than naming a variable that does not exist.
+    /// The routed provider's own environment variable, read at request time.
+    /// The environment is the only source: a provider with no `env_api_key`
+    /// therefore has none at all, and the error names the roster rather than a
+    /// variable that does not exist.
     fn api_key(&self, provider: &'static ProviderSpec) -> Result<String> {
-        if let Some(key) = &self.api_key_override {
-            return Ok(key.clone());
-        }
         let env_var = provider.env_api_key();
         env_var
             .and_then(|var| std::env::var(var).ok())
@@ -144,8 +101,8 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::Capabilities;
-    use crate::types::openai_compat::chat::completions::ChatCompletionRequestMessage;
+    use crate::protocol::openai_compat::chat_completions::types::ChatCompletionRequestMessage;
+    use crate::registry::{Capabilities, ModelSpec};
 
     /// The two halves the client works from, for a model the shipped roster
     /// does have.
@@ -165,11 +122,11 @@ mod tests {
         }))
     }
 
-    /// A provider that names no environment variable cannot fall back to one,
+    /// A provider that names no environment variable has no key source at all,
     /// so the error must say that rather than send someone off to set a
     /// variable nothing reads.
     #[test]
-    fn a_provider_with_no_env_api_key_asks_for_an_explicit_one() {
+    fn a_provider_with_no_env_api_key_names_the_roster() {
         let err = Client::new(ClientConfig::default())
             .unwrap()
             .api_key(demo_provider("https://api.demo.test", None))
@@ -183,7 +140,7 @@ mod tests {
         }
         let message = err.to_string();
         assert!(
-            message.contains("names no default environment variable"),
+            message.contains("names no environment variable"),
             "{message}"
         );
         assert!(!message.contains("set the"), "{message}");
@@ -192,20 +149,6 @@ mod tests {
         let wire: serde_json::Value = serde_json::from_str(&err.to_wire_json()).unwrap();
         assert_eq!(wire["code"], "missing_api_key");
         assert!(wire["env_var"].is_null());
-    }
-
-    /// And an explicitly supplied key is all such a provider ever needed.
-    #[test]
-    fn an_explicit_key_serves_a_provider_with_no_env_api_key() {
-        let client = Client::new(ClientConfig::default())
-            .unwrap()
-            .with_api_key("sk-explicit");
-        assert_eq!(
-            client
-                .api_key(demo_provider("https://api.demo.test", None))
-                .unwrap(),
-            "sk-explicit"
-        );
     }
 
     /// What ships upstream is the ENTRY's name, never the string the caller
@@ -248,16 +191,18 @@ mod tests {
             }],
             ..Default::default()
         };
-        client
-            .openai_compat_chat(
-                demo_provider(&server.uri(), Some("DEMO_API_KEY")),
-                aliased,
-                "demo/chat",
-                request,
-                "k",
-            )
-            .await
-            .unwrap();
+        // What `chat_completion` does, minus the routing it already proved:
+        // the SPEC's model name is what ingest is handed.
+        let normalized = openai_compat::chat_completions::ingest_request(request, aliased.model());
+        openai_compat::chat_completions::exchange(
+            &normalized,
+            &client.http,
+            "demo",
+            &server.uri(),
+            "k",
+        )
+        .await
+        .unwrap();
 
         let sent = &server.received_requests().await.unwrap()[0];
         let body: serde_json::Value = serde_json::from_slice(&sent.body).unwrap();
@@ -306,10 +251,16 @@ mod tests {
             ..Default::default()
         };
         let (provider, model) = pair_for("openai/gpt-5.6");
-        client
-            .openai_compat_chat(provider, model, "openai/gpt-5.6", request, "k")
-            .await
-            .unwrap();
+        let normalized = openai_compat::chat_completions::ingest_request(request, model.model());
+        openai_compat::chat_completions::exchange(
+            &normalized,
+            &client.http,
+            provider.name(),
+            client.base_url(provider),
+            "k",
+        )
+        .await
+        .unwrap();
 
         let sent = &server.received_requests().await.unwrap()[0];
         let body: serde_json::Value = serde_json::from_slice(&sent.body).unwrap();
