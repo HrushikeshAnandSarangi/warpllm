@@ -50,32 +50,6 @@ npm install @warpllm/warpllm     # node
 Unlisted models are rejected rather than guessed at, so routing a name warpllm
 doesn't know is an error, not a surprise upstream bill.
 
-## Community
-
-> [!IMPORTANT]
-> **warpllm is community-led.**
->
-> The roadmap, examples, integrations, and rough edges should be shaped in the open by the people building with it. Bring ideas, questions, provider requests, bug reports, benchmarks, and experiments.
-
-### Contributing
-
-I'm setting up this up! We're excited to have you join us in building this out together. In the meantime, there are a couple things you can do:
-
-1.  **Star this repo**: We appreciate visibility on the project.
-1.  **Share your thoughts online**: Post in our discord or reddit community! Your opinion can help others, and we're always listening.
-
-Adding an OpenAI-compatible provider is usually one entry in
-`crates/warpllm/src/registry/specs.yaml` — the file documents its own rules.
-CI runs all of these on every pull request, and you can run each locally:
-
-```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cd bindings/python && uv sync --locked && uv run pytest
-cd bindings/node && npm ci && npx napi build --platform && npm test
-```
-
 ## Layers
 
 1.  **An SDK** - provide a request and we translate it to work with different providers and models out of box.
@@ -94,6 +68,17 @@ cd bindings/node && npm ci && npx napi build --platform && npm test
 ## Roadmap
 
 The roadmap lives in [GitHub issues](https://github.com/warpllm/warpllm/issues) — one issue per item, so direction is discussed where the work happens. Add a comment if you see something missing, or if something there matters enough to you that it should move up.
+
+## Contributing
+
+We're excited to have you join us. See the
+[contribution guide](CONTRIBUTING.md) for how to get started.
+
+A big thank you to the contributors below who have helped build this AI gateway to this point!
+
+<a href="https://github.com/warpllm/warpllm/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=warpllm/warpllm" />
+</a>
 
 ## License
 

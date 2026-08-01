@@ -1,0 +1,13 @@
+{
+  "name": {
+    "title": "Full legal name",
+    "type": "string",
+    "githubKey": "name",
+    "required": true
+  },
+  "agreement": {
+    "title": "I have read and agree to the warpllm Individual Contributor License Agreement",
+    "type": "boolean",
+    "required": true
+  }
+}
