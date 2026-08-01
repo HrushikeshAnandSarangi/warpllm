@@ -15,8 +15,8 @@
 //! protocols may serve the same API at different paths.
 //!
 //! Provider-specific logic does NOT live here either: per-model specs are
-//! contributed by `crate::registry`, and per-provider conversion deltas are
-//! adapters under `crate::normalized`. [`Protocol`] is the one thing pointing
+//! contributed by `crate::registry`, and per-provider conversion deltas belong
+//! with the conversions under `crate::normalized`. [`Protocol`] is the one pointing
 //! the other way — the registry names a wire format, so the name is declared
 //! here with the modules that implement it.
 
@@ -25,7 +25,8 @@ pub mod openai_compat;
 /// How a provider's wire protocol is spoken. One variant per wire format,
 /// not per provider — the exhaustive `match` in `client.rs` stays small
 /// forever while adding a model is one entry in the registry YAML. A provider
-/// that diverges from its dialect gets an adapter, not a variant.
+/// that diverges from its dialect is handled in that dialect's conversions,
+/// never with a variant of its own.
 ///
 /// `non_exhaustive` because this enum exists to grow: a new wire format is a
 /// normal addition, and without it every downstream `match` would break on a

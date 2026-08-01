@@ -8,7 +8,7 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::normalized::{self, ContentBlock, FinishReason, IngestSource, RawJson};
+use crate::normalized::{self, ContentBlock, FinishReason, IngestSource, RawJson, ReasoningDetail};
 use crate::protocol::Protocol;
 use crate::protocol::openai_compat::chat_completions::types::{
     ChatCompletionMessageToolCall, ChatCompletionMessageToolCallUnion,
@@ -111,9 +111,10 @@ fn ingest_message(message: ChatCompletionResponseMessage) -> normalized::Message
     if let Some(function_call) = function_call {
         compat.insert("function_call".into(), plain(&function_call));
     }
-    let mut blocks: Vec<ContentBlock> = content
-        .map(|text| ContentBlock::Text { text, cache: None })
+    // Reasoning first, since it precedes the answer it led to.
+    let mut blocks: Vec<ContentBlock> = reasoning_block(&unknown_fields)
         .into_iter()
+        .chain(content.map(|text| ContentBlock::Text { text, cache: None }))
         .collect();
     match tool_calls {
         // `Some([])` is distinguishable from absent; stash it so render
@@ -130,6 +131,44 @@ fn ingest_message(message: ChatCompletionResponseMessage) -> normalized::Message
         content: blocks,
         ext: namespaced(compat),
     }
+}
+
+/// `reasoning_content`, a sibling of `content` carrying chain-of-thought, as a
+/// typed block.
+///
+/// OpenAI has no such field, but it is not one provider's extension either:
+/// DeepSeek, vLLM, SGLang and others all emit it from their OpenAI-compatible
+/// surfaces, which makes it part of what `openai_compat` means as a permissive
+/// superset. So it is promoted for EVERY provider here rather than per-provider
+/// — which providers emit it is not a list warpllm should have to keep in Rust,
+/// and gating it would mean a new roster entry silently lost the mapping until
+/// someone wrote code for it.
+///
+/// PROMOTE BUT RETAIN: the caller keeps `unknown_fields` intact, so the field
+/// still rides `ext["openai_compat"]` and the renderer replays it verbatim.
+/// Nothing could rebuild it from the block — `render_message` drops Reasoning
+/// blocks, because the dialect has no field to render them into. `ext` is what
+/// the provider said; the block is what it means.
+///
+/// `provenance` records the dialect rather than a hand-written identifier:
+/// [`Protocol::as_str`] is one drift-tested string, so it cannot disagree with
+/// the namespace the same field is filed under.
+fn reasoning_block(fields: &UnknownFields) -> Option<ContentBlock> {
+    let text = fields
+        .get("reasoning_content")?
+        .as_str()
+        // Absent, null, empty, or a non-string all mean "no reasoning". An
+        // empty block would claim the provider sent thinking it did not.
+        .filter(|text| !text.is_empty())?;
+    Some(ContentBlock::Reasoning {
+        detail: ReasoningDetail::Text {
+            text: text.to_string(),
+            // No provider on this dialect publishes a signature for it.
+            signature: None,
+        },
+        provenance: Some(Protocol::OpenAiCompat.as_str().to_string()),
+        id: None,
+    })
 }
 
 /// A plain function call becomes a typed block; anything else — custom
@@ -517,9 +556,11 @@ mod tests {
     fn plain_function_tool_call_becomes_toolcall_block() {
         let normalized = ingest_response(parse(maximal_body()));
         let content = &normalized.completions[0].message.content;
-        // Text block first, then tool calls in array order.
-        assert!(matches!(&content[0], ContentBlock::Text { text, .. } if text == "Hello there!"));
-        match &content[1] {
+        // The block order this dialect produces: promoted reasoning, then the
+        // text, then tool calls in array order.
+        assert!(matches!(&content[0], ContentBlock::Reasoning { .. }));
+        assert!(matches!(&content[1], ContentBlock::Text { text, .. } if text == "Hello there!"));
+        match &content[2] {
             ContentBlock::ToolCall {
                 id,
                 name,
@@ -534,10 +575,10 @@ mod tests {
         }
         // Custom and extended calls pass through as Unknown, verbatim.
         assert!(
-            matches!(&content[2], ContentBlock::Unknown(v) if v["id"] == "call-2" && v["custom"]["input"] == "raw text")
+            matches!(&content[3], ContentBlock::Unknown(v) if v["id"] == "call-2" && v["custom"]["input"] == "raw text")
         );
         assert!(
-            matches!(&content[3], ContentBlock::Unknown(v) if v["id"] == "call-3" && v["vendor_extra"] == true)
+            matches!(&content[4], ContentBlock::Unknown(v) if v["id"] == "call-3" && v["vendor_extra"] == true)
         );
     }
 
@@ -599,6 +640,68 @@ mod tests {
         let normalized = ingest_response(parse(body.clone()));
         let rendered = render_response(&normalized, "openai");
         assert_eq!(serde_json::to_value(&rendered).unwrap(), body);
+    }
+
+    /// Promoted for any provider on this dialect — which providers emit it is
+    /// not a list warpllm keeps — and ordered before the answer it led to.
+    #[test]
+    fn reasoning_content_becomes_a_reasoning_block_before_the_answer() {
+        let normalized = ingest_response(parse(maximal_body()));
+        let content = &normalized.completions[0].message.content;
+
+        match &content[0] {
+            ContentBlock::Reasoning {
+                detail: ReasoningDetail::Text { text, signature },
+                provenance,
+                id,
+            } => {
+                assert_eq!(text, "step by step");
+                assert_eq!(*signature, None);
+                assert_eq!(provenance.as_deref(), Some("openai_compat"));
+                assert_eq!(*id, None);
+            }
+            other => panic!("expected a Reasoning block first, got {other:?}"),
+        }
+        assert!(
+            matches!(&content[1], ContentBlock::Text { .. }),
+            "the answer must still follow the reasoning: {content:?}"
+        );
+    }
+
+    /// Absent, empty, and non-string all mean "no reasoning" — a promoted empty
+    /// block would claim the provider sent thinking it never did, and a
+    /// non-string must not panic since ingest does not type this field.
+    #[test]
+    fn only_a_non_empty_string_reasoning_content_is_promoted() {
+        for value in [json!(""), json!(null), json!(["not", "a", "string"])] {
+            let mut body = maximal_body();
+            body["choices"][0]["message"]["reasoning_content"] = value.clone();
+            let normalized = ingest_response(parse(body));
+            let content = &normalized.completions[0].message.content;
+            assert!(
+                !matches!(content[0], ContentBlock::Reasoning { .. }),
+                "{value} was promoted"
+            );
+        }
+    }
+
+    /// A message with no `reasoning_content` at all gains no block.
+    #[test]
+    fn a_message_without_reasoning_content_gains_no_block() {
+        let mut body = maximal_body();
+        body["choices"][0]["message"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reasoning_content");
+        let normalized = ingest_response(parse(body));
+
+        assert!(
+            !normalized.completions[0]
+                .message
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::Reasoning { .. }))
+        );
     }
 
     #[test]

@@ -13,11 +13,10 @@
 //!
 //! Providers that speak this dialect but diverge in places — a response field
 //! carrying meaning OpenAI has no name for, a parameter spelled differently —
-//! do NOT get shapes of their own. They get an adapter over the conversions;
-//! the shapes here stay the dialect's.
+//! do NOT get shapes of their own. The divergence is handled in the
+//! conversions under `crate::normalized`; the shapes here stay the dialect's.
 //!
-//! The error envelope below is protocol-wide, shared by every endpoint, and is
-//! the default a provider's adapter may replace.
+//! The error envelope below is protocol-wide, shared by every endpoint.
 
 pub mod chat_completions;
 

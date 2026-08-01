@@ -6,8 +6,52 @@ use warpllm::Error;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-/// DeepSeek is a pure data entry over the OpenAI-compatible protocol: the
-/// same endpoint impl serves it, so this only proves routing — prefix
+/// `reasoning_content` is promoted to a normalized Reasoning block by the
+/// dialect's own ingest, for every provider (unit-tested in
+/// `normalized::openai_compat::chat_completions::response`). This is the other
+/// half of that contract, asserted here because DeepSeek is the provider that
+/// actually sends the field: it must ALSO still reach the caller byte-for-byte.
+///
+/// That only holds because ingest RETAINS the `ext` entry rather than consuming
+/// it — the renderer drops Reasoning blocks, so nothing else could rebuild the
+/// field. Consuming it would break this test.
+///
+/// It cannot assert the block exists: render drops Reasoning blocks by design,
+/// so the block is invisible from out here.
+#[test]
+fn reasoning_content_survives_the_round_trip_to_the_caller() {
+    with_deepseek_key(async {
+        let mut body = openai_completion_body();
+        body["model"] = json!("deepseek-v4-pro");
+        body["choices"][0]["message"]["reasoning_content"] = json!("step by step");
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body.clone()))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let completion = client_for(&server)
+            .chat_completion(request("deepseek/deepseek-v4-pro"))
+            .await
+            .unwrap();
+
+        // Model echo aside, and minus the explicit `"logprobs": null` the wire
+        // types drop on their own (Option + skip_serializing_if).
+        let mut expected = body;
+        expected["model"] = json!("deepseek/deepseek-v4-pro");
+        expected["choices"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("logprobs");
+        assert_eq!(serde_json::to_value(&completion).unwrap(), expected);
+    });
+}
+
+/// DeepSeek is otherwise a pure data entry over the OpenAI-compatible protocol:
+/// the same endpoint impl serves it, so this only proves routing — prefix
 /// stripping, echo, and error attribution under the `deepseek` name.
 #[test]
 fn deepseek_happy_path() {

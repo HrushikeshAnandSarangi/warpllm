@@ -8,7 +8,7 @@ use crate::protocol::openai_compat::error_from_body;
 use super::{ingest_response, render_request};
 
 /// Renders the normalized request for this dialect, posts it, and ingests the
-/// reply — the one place this protocol's request order is stated.
+/// reply — the one place this protocol's order is stated.
 ///
 /// Normalized on both ends, deliberately: that is what lets every protocol
 /// implement this same signature, so `client.rs` gains one match arm per
@@ -19,9 +19,8 @@ use super::{ingest_response, render_request};
 /// nothing here needs to outlive the call.
 ///
 /// Error mapping happens here rather than in the transport because which
-/// [`crate::Error`] a status becomes is a protocol decision — a provider whose
-/// envelope differs from the dialect default overrides it — while reading the
-/// socket is not.
+/// [`crate::Error`] a status becomes is a protocol-and-provider decision, while
+/// reading the socket is not.
 pub(crate) async fn exchange(
     request: &normalized::ChatRequest,
     http: &reqwest::Client,
@@ -30,9 +29,8 @@ pub(crate) async fn exchange(
     api_key: &str,
 ) -> Result<normalized::ChatResponse> {
     let wire = render_request(request, provider)?;
-    let response = match transport::post(http, provider, base_url, api_key, &wire).await? {
-        Outcome::Ok(response) => response,
-        Outcome::Status { status, body } => return Err(error_from_body(provider, status, &body)),
-    };
-    Ok(ingest_response(response))
+    match transport::post(http, provider, base_url, api_key, &wire).await? {
+        Outcome::Ok(response) => Ok(ingest_response(response)),
+        Outcome::Status { status, body } => Err(error_from_body(provider, status, &body)),
+    }
 }

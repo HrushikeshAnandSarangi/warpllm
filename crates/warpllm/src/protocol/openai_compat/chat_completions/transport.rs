@@ -9,11 +9,12 @@ use crate::protocol::openai_compat::chat_completions::types::{
 };
 
 /// What the upstream said. A non-2xx is NOT an [`Err`] here: which [`Error`] a
-/// given status and body becomes is the caller's to decide, because a provider
-/// may envelope its errors differently from the dialect default and only the
-/// caller knows its adapter. `Err` is reserved for failures no adapter
-/// customizes — the request never completing, or a 2xx body that will not
-/// decode.
+/// given status and body becomes is the caller's to decide: a provider may
+/// envelope its errors differently from the dialect default, and deciding here
+/// would mean `protocol` reaching into the conversion layer to find out, which
+/// is the dependency this module exists without. `Err` is reserved for failures
+/// nothing could reinterpret — the request never completing, or a 2xx body that
+/// will not decode.
 ///
 /// `large_enum_variant` is allowed rather than fixed: boxing the success
 /// variant would add an allocation to every successful request to shrink a

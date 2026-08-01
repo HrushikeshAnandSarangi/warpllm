@@ -157,8 +157,8 @@ fn routable(provider: &ProviderSpec) -> Result<(), String> {
     // lookup of `""` at request time.
     if provider.env_api_key().is_some_and(str::is_empty) {
         return Err(
-            "env_api_key is empty; omit the field entirely if this provider takes \
-             its key from the caller"
+            "env_api_key is empty; omit the field entirely if this provider has no \
+             key variable yet"
                 .into(),
         );
     }
