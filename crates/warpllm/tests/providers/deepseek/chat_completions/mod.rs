@@ -8,7 +8,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// `reasoning_content` is promoted to a normalized Reasoning block by the
 /// dialect's own ingest, for every provider (unit-tested in
-/// `normalized::openai_compat::chat_completions::response`). This is the other
+/// `gateway::openai_compat::chat_completions::response`). This is the other
 /// half of that contract, asserted here because DeepSeek is the provider that
 /// actually sends the field: it must ALSO still reach the caller byte-for-byte.
 ///

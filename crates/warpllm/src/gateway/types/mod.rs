@@ -1,4 +1,4 @@
-//! Shared primitives for the normalized types.
+//! Shared primitives for the gateway types.
 
 pub(crate) mod message;
 pub(crate) mod request;
@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::protocol::Protocol;
+use crate::types::Protocol;
 
 /// Namespaced passthrough bags, keyed by dialect name (`"openai_compat"`)
 /// or provider name (`"deepseek"`). Renderers emit the dialect namespace
@@ -57,7 +57,7 @@ impl RawJson {
     }
 }
 
-/// Where a normalized value came from. Retained so adapters can one day
+/// Where a gateway value came from. Retained so adapters can one day
 /// take a same-dialect passthrough fast path, and for diffing what was
 /// received against what was sent. Not part of the canonical JSON form.
 #[derive(Debug, Clone)]

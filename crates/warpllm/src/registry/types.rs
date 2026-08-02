@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 
-use crate::protocol::{Api, Protocol};
+use crate::types::{Api, Protocol};
 
 /// The resolved roster: providers, and every routable `model_str` under them.
 ///

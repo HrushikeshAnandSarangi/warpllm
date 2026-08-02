@@ -1,8 +1,8 @@
 //! `Api::ChatCompletions` as OpenAI-compatible providers speak it: the wire
 //! shapes in [`types`], the HTTP binding in `transport`.
 //!
-//! The conversions to and from the normalized forms live at
-//! `crate::normalized::openai_compat::chat_completions`.
+//! The conversions to and from the gateway forms live at
+//! `crate::gateway::openai_compat::chat_completions`.
 
 pub mod types;
 

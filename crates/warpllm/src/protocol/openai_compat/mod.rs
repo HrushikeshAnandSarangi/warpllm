@@ -8,13 +8,13 @@
 //! <https://github.com/openai/openai-openapi>; we track it and contribute
 //! changes there rather than fork it. A provider with its own wire format gets
 //! a sibling protocol module here (e.g. `anthropic::messages`), and the
-//! conversions that translate between the two via the normalized request live
-//! under `crate::normalized`.
+//! conversions that translate between the two via the gateway request live
+//! under `crate::gateway`.
 //!
 //! Providers that speak this dialect but diverge in places — a response field
 //! carrying meaning OpenAI has no name for, a parameter spelled differently —
 //! do NOT get shapes of their own. The divergence is handled in the
-//! conversions under `crate::normalized`; the shapes here stay the dialect's.
+//! conversions under `crate::gateway`; the shapes here stay the dialect's.
 //!
 //! The error envelope below is protocol-wide, shared by every endpoint.
 

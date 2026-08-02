@@ -1,4 +1,4 @@
-//! The normalized chat request.
+//! The gateway chat request.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -123,7 +123,7 @@ mod tests {
 
     use super::super::{ContentBlock, Role};
     use super::*;
-    use crate::protocol::Protocol;
+    use crate::types::Protocol;
 
     #[test]
     fn chat_request_round_trips_and_skips_source() {

@@ -1,5 +1,5 @@
-//! Response conversions: OpenAI-compatible wire → normalized (ingest) and
-//! normalized → wire (render). Round trips are lossless with zero
+//! Response conversions: OpenAI-compatible wire → gateway (ingest) and
+//! gateway → wire (render). Round trips are lossless with zero
 //! permitted transformations: dialect-specific fields (`object`,
 //! `service_tier`, choice `index`, `refusal`, …) ride
 //! `ext["openai_compat"]` at their nesting level and are restored
@@ -8,19 +8,21 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::normalized::{self, ContentBlock, FinishReason, IngestSource, RawJson, ReasoningDetail};
-use crate::protocol::Protocol;
+use crate::gateway::types::{
+    self, ContentBlock, FinishReason, IngestSource, RawJson, ReasoningDetail,
+};
 use crate::protocol::openai_compat::chat_completions::types::{
     ChatCompletionMessageToolCall, ChatCompletionMessageToolCallUnion,
     ChatCompletionResponseMessage, Choice, CompletionUsage, CreateChatCompletionResponse, Function,
     UnknownFields,
 };
+use crate::types::Protocol;
 
 use super::super::{merged_ext, namespaced, role_from_wire, role_to_wire};
 
 /// Permissive and infallible; the exhaustive destructures at every level
 /// make dropping a newly-typed wire field a compile error.
-pub(crate) fn ingest_response(response: CreateChatCompletionResponse) -> normalized::ChatResponse {
+pub(crate) fn ingest_response(response: CreateChatCompletionResponse) -> types::ChatResponse {
     // Wire structs are plain serde data; serialization cannot fail.
     let body = serde_json::to_value(&response).expect("wire response serializes");
     let CreateChatCompletionResponse {
@@ -47,7 +49,7 @@ pub(crate) fn ingest_response(response: CreateChatCompletionResponse) -> normali
         compat.insert("system_fingerprint".into(), Value::String(fingerprint));
     }
     compat.extend(unknown_fields);
-    normalized::ChatResponse {
+    types::ChatResponse {
         id,
         model,
         created: Some(created),
@@ -61,7 +63,7 @@ pub(crate) fn ingest_response(response: CreateChatCompletionResponse) -> normali
     }
 }
 
-fn ingest_choice(choice: Choice) -> normalized::Completion {
+fn ingest_choice(choice: Choice) -> types::Completion {
     let Choice {
         finish_reason,
         index,
@@ -75,7 +77,7 @@ fn ingest_choice(choice: Choice) -> normalized::Completion {
         compat.insert("logprobs".into(), plain(&logprobs));
     }
     compat.extend(unknown_fields);
-    normalized::Completion {
+    types::Completion {
         message: ingest_message(message),
         finish_reason: FinishReason::from_raw(&finish_reason),
         finish_reason_raw: finish_reason,
@@ -83,7 +85,7 @@ fn ingest_choice(choice: Choice) -> normalized::Completion {
     }
 }
 
-fn ingest_message(message: ChatCompletionResponseMessage) -> normalized::Message {
+fn ingest_message(message: ChatCompletionResponseMessage) -> types::Message {
     let ChatCompletionResponseMessage {
         content,
         refusal,
@@ -126,7 +128,7 @@ fn ingest_message(message: ChatCompletionResponseMessage) -> normalized::Message
         None => {}
     }
     compat.extend(unknown_fields);
-    normalized::Message {
+    types::Message {
         role,
         content: blocks,
         ext: namespaced(compat),
@@ -191,7 +193,7 @@ fn ingest_tool_call(call: ChatCompletionMessageToolCallUnion) -> ContentBlock {
     }
 }
 
-fn ingest_usage(usage: CompletionUsage) -> normalized::Usage {
+fn ingest_usage(usage: CompletionUsage) -> types::Usage {
     let CompletionUsage {
         completion_tokens,
         prompt_tokens,
@@ -220,7 +222,7 @@ fn ingest_usage(usage: CompletionUsage) -> normalized::Usage {
         compat.insert("completion_tokens_details".into(), Value::Object(residue));
     }
     compat.extend(unknown_fields);
-    normalized::Usage {
+    types::Usage {
         input_tokens: Some(u64::from(prompt_tokens)),
         output_tokens: Some(u64::from(completion_tokens)),
         total_tokens: Some(u64::from(total_tokens)),
@@ -234,7 +236,7 @@ fn ingest_usage(usage: CompletionUsage) -> normalized::Usage {
 /// Infallible: dialect fields restore from ext (a hook that corrupted a
 /// stashed value beyond its wire type falls back to dropping that field).
 pub(crate) fn render_response(
-    response: &normalized::ChatResponse,
+    response: &types::ChatResponse,
     provider: &str,
 ) -> CreateChatCompletionResponse {
     let mut unknown_fields = merged_ext(&response.ext, provider);
@@ -259,7 +261,7 @@ pub(crate) fn render_response(
     }
 }
 
-fn render_choice(completion: &normalized::Completion, position: usize, provider: &str) -> Choice {
+fn render_choice(completion: &types::Completion, position: usize, provider: &str) -> Choice {
     let mut unknown_fields = merged_ext(&completion.ext, provider);
     let index = unknown_fields
         .remove("index")
@@ -274,7 +276,7 @@ fn render_choice(completion: &normalized::Completion, position: usize, provider:
     }
 }
 
-fn render_message(message: &normalized::Message, provider: &str) -> ChatCompletionResponseMessage {
+fn render_message(message: &types::Message, provider: &str) -> ChatCompletionResponseMessage {
     let mut unknown_fields = merged_ext(&message.ext, provider);
     let role = match unknown_fields.remove("role") {
         Some(Value::String(raw)) => raw,
@@ -331,7 +333,7 @@ fn render_message(message: &normalized::Message, provider: &str) -> ChatCompleti
     }
 }
 
-fn render_usage(usage: &normalized::Usage, provider: &str) -> CompletionUsage {
+fn render_usage(usage: &types::Usage, provider: &str) -> CompletionUsage {
     let mut unknown_fields = merged_ext(&usage.ext, provider);
     let prompt_details = render_details(
         unknown_fields.remove("prompt_tokens_details"),

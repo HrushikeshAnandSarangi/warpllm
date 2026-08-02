@@ -1,14 +1,14 @@
-//! Request conversions: OpenAI-compatible wire → normalized (ingest) and
-//! normalized → wire (render).
+//! Request conversions: OpenAI-compatible wire → gateway (ingest) and
+//! gateway → wire (render).
 
 use serde_json::Value;
 
 use crate::error::{Error, Result};
-use crate::normalized::{self, ContentBlock, IngestSource};
-use crate::protocol::Protocol;
+use crate::gateway::types::{self, ContentBlock, IngestSource};
 use crate::protocol::openai_compat::chat_completions::types::{
     ChatCompletionRequestMessage, CreateChatCompletionRequest,
 };
+use crate::types::Protocol;
 
 use super::super::{merged_ext, namespaced, role_from_wire, role_to_wire};
 
@@ -24,7 +24,7 @@ use super::super::{merged_ext, namespaced, role_from_wire, role_to_wire};
 pub(crate) fn ingest_request(
     request: CreateChatCompletionRequest,
     model: &str,
-) -> normalized::ChatRequest {
+) -> types::ChatRequest {
     // Wire structs are plain serde data; serialization cannot fail.
     let body = serde_json::to_value(&request).expect("wire request serializes");
     let CreateChatCompletionRequest {
@@ -37,10 +37,10 @@ pub(crate) fn ingest_request(
         stream,
         unknown_fields,
     } = request;
-    normalized::ChatRequest {
+    types::ChatRequest {
         model: model.to_string(),
         messages: messages.into_iter().map(ingest_message).collect(),
-        params: normalized::GenerationParams {
+        params: types::GenerationParams {
             max_tokens,
             temperature,
             top_p,
@@ -56,7 +56,7 @@ pub(crate) fn ingest_request(
     }
 }
 
-fn ingest_message(message: ChatCompletionRequestMessage) -> normalized::Message {
+fn ingest_message(message: ChatCompletionRequestMessage) -> types::Message {
     let ChatCompletionRequestMessage {
         role,
         content,
@@ -69,7 +69,7 @@ fn ingest_message(message: ChatCompletionRequestMessage) -> normalized::Message 
         // render restores the raw spelling from ext.
         compat.insert("role".into(), Value::String(raw));
     }
-    normalized::Message {
+    types::Message {
         role,
         content: vec![ContentBlock::Text {
             text: content,
@@ -79,14 +79,14 @@ fn ingest_message(message: ChatCompletionRequestMessage) -> normalized::Message 
     }
 }
 
-/// Renders the normalized request back onto the wire. Mechanical by
+/// Renders the gateway request back onto the wire. Mechanical by
 /// design: nothing is filtered against what the target documents — the
 /// provider is the authority on its own parameters and rejects what it
 /// doesn't accept. Same-dialect round trips are lossless modulo three
 /// documented transformations: the provider prefix is stripped from
 /// `model`, `stream` is dropped, and an empty `stop` list is omitted.
 pub(crate) fn render_request(
-    request: &normalized::ChatRequest,
+    request: &types::ChatRequest,
     provider: &'static str,
 ) -> Result<CreateChatCompletionRequest> {
     ensure_no_staged_features(request)?;
@@ -111,7 +111,7 @@ pub(crate) fn render_request(
 /// The compat wire types don't model these yet (they arrive via
 /// `ext["openai_compat"]` passthrough instead); a typed rendering is the
 /// documented follow-up before the first translated protocol.
-fn ensure_no_staged_features(request: &normalized::ChatRequest) -> Result<()> {
+fn ensure_no_staged_features(request: &types::ChatRequest) -> Result<()> {
     if !request.tools.is_empty()
         || request.tool_choice.is_some()
         || request.response_format.is_some()
@@ -127,7 +127,7 @@ fn ensure_no_staged_features(request: &normalized::ChatRequest) -> Result<()> {
 }
 
 fn render_message(
-    message: &normalized::Message,
+    message: &types::Message,
     provider: &str,
 ) -> Result<ChatCompletionRequestMessage> {
     let mut unknown_fields = merged_ext(&message.ext, provider);
@@ -162,7 +162,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::normalized::ProviderExt;
+    use crate::gateway::types::ProviderExt;
 
     fn full_wire_request() -> CreateChatCompletionRequest {
         let mut request = CreateChatCompletionRequest {
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn render_rejects_staged_features() {
         let mut normalized = ingest_request(full_wire_request(), "gpt-5.6");
-        normalized.tools.push(normalized::ToolDef {
+        normalized.tools.push(types::ToolDef {
             name: "search".into(),
             description: None,
             input_schema: json!({"type": "object"}),

@@ -1,4 +1,4 @@
-//! The normalized chat response.
+//! The gateway chat response.
 
 use serde::{Deserialize, Serialize};
 

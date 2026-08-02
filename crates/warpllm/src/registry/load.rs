@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use super::types::{Capabilities, ModelSpec, ProviderSpec, Registry};
-use crate::protocol::{Api, Protocol};
+use crate::types::{Api, Protocol};
 
 /// The whole roster: providers, each holding the models routable under it.
 ///

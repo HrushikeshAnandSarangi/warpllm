@@ -104,7 +104,7 @@ fn resolve<'a>(
 mod tests {
     use super::testing::{clean, keys, providers, with};
     use super::*;
-    use crate::protocol::{Api, Protocol};
+    use crate::types::{Api, Protocol};
 
     // ------------------------------------------------------------- matching
 

@@ -1,5 +1,5 @@
 //! Conversions between the OpenAI-compatible wire shapes
-//! ([`crate::protocol::openai_compat`]) and the normalized forms, plus the
+//! ([`crate::protocol::openai_compat`]) and the gateway forms, plus the
 //! vocabulary glue both directions share.
 //!
 //! One child module per API surface, named for its [`Api`](crate::Api)
@@ -10,9 +10,9 @@ pub(crate) mod chat_completions;
 
 use serde_json::Value;
 
-use crate::normalized::{ProviderExt, Role};
-use crate::protocol::Protocol;
+use crate::gateway::types::{ProviderExt, Role};
 use crate::protocol::openai_compat::chat_completions::types::UnknownFields;
+use crate::types::Protocol;
 
 /// Flattens the ext bags relevant to this render target: the dialect
 /// namespace first (the target speaks it), overlaid by the provider's own
@@ -45,8 +45,8 @@ pub(crate) fn namespaced(fields: UnknownFields) -> ProviderExt {
     ext
 }
 
-/// Wire role string → normalized role. Unrecognized roles (e.g. OpenAI's
-/// `"developer"`) map to the closest normalized role and return the raw
+/// Wire role string → gateway role. Unrecognized roles (e.g. OpenAI's
+/// `"developer"`) map to the closest gateway role and return the raw
 /// spelling so ingest can stash it for exact restoration.
 pub(crate) fn role_from_wire(role: String) -> (Role, Option<String>) {
     match role.as_str() {
@@ -122,14 +122,14 @@ mod tests {
 
     /// An empty bag is absent, not an empty object — otherwise every message
     /// without passthrough fields would carry `ext: {"openai_compat": {}}` and
-    /// the normalized form would stop comparing equal to a hand-built one.
+    /// the gateway form would stop comparing equal to a hand-built one.
     #[test]
     fn namespaced_omits_an_empty_bag() {
         assert!(namespaced(UnknownFields::new()).is_empty());
     }
 
     /// [`role_from_wire`] and [`role_to_wire`] are inverses over the roles the
-    /// normalized model names, with no raw spelling stashed for any of them.
+    /// gateway model names, with no raw spelling stashed for any of them.
     #[test]
     fn known_roles_round_trip_with_no_residue() {
         for role in [Role::System, Role::User, Role::Assistant, Role::Tool] {

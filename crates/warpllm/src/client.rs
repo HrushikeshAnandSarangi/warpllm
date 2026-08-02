@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use crate::config::{ClientConfig, DEFAULT_TIMEOUT_SECS};
 use crate::error::{Error, Result};
-use crate::normalized::openai_compat;
+use crate::gateway::openai_compat;
 use crate::protocol::openai_compat::chat_completions::types::{
     CreateChatCompletionRequest, CreateChatCompletionResponse,
 };
-use crate::protocol::{Api, Protocol};
 use crate::registry::{ProviderSpec, fetch_model};
+use crate::types::{Api, Protocol};
 
 pub struct Client {
     http: reqwest::Client,

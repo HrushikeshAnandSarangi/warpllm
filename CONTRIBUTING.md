@@ -32,7 +32,7 @@ Reading and signing the [warpllm Individual Contributor License Agreement](https
 We welcome contributions in several areas:
 
 * **Model/provider integrations**: Improve the AI Gateway by maintaining or adding more models and providers. Usually an edit to `registry/specs.yaml` — see [Adding a provider or model](#adding-a-provider-or-model).
-* **Adding protocols**: Sometimes we see new protocols outside of the ones we support (erhm.. OpenAI-Compatible API). These live in `protocol/`, with conversions in `normalized/`.
+* **Adding protocols**: Sometimes we see new protocols outside of the ones we support (erhm.. OpenAI-Compatible API). These live in `protocol/`, with conversions in `gateway/`.
 * **Documentation**: Improve guides, examples, and API docs
 * **Testing**: Increase test coverage always helps
 * **Examples**: Create demos and use cases on how to use warpllm
@@ -51,8 +51,10 @@ crates/warpllm/          The SDK. Everything below is a module of this crate.
     specs.yaml           The roster itself — adding a model is an edit here.
   protocol/              Wire shapes: what a provider's API actually sends
                          and receives, per wire format (not per provider).
-  normalized/            warpllm's own request/response types, and the
+  gateway/               warpllm's own request/response types, and the
                          conversions between them and the wire shapes.
+  types.rs               The vocabulary both layers share: `Protocol` (which
+                         wire format) and `Api` (which surface).
   client.rs              Routes a request: look up the model, pick the
                          protocol, send it, convert the response back.
 crates/warpllm-server/   The OpenAI-compatible HTTP gateway (unreleased),
