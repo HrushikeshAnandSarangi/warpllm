@@ -81,7 +81,7 @@ pub(crate) enum ContentBlock {
     /// reconstitute the native shape (or know they can't).
     Reasoning {
         detail: ReasoningDetail,
-        /// Native dialect this block originated from, e.g.
+        /// Native protocol this block originated from, e.g.
         /// "anthropic-claude-v1", "openai-responses-v1".
         #[serde(skip_serializing_if = "Option::is_none")]
         provenance: Option<String>,

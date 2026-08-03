@@ -1,6 +1,6 @@
 use crate::openai_common::{client_for, openai_completion_body, request, with_openai_key};
 use serde_json::json;
-use warpllm::Error;
+use warpllm::{Error, Origin};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -93,10 +93,25 @@ fn unknown_request_fields_are_forwarded() {
 #[test]
 fn openai_error_statuses_map_to_provider_error() {
     with_openai_key(async {
-        for (status, error_type, message) in [
-            (401, "invalid_request_error", "Incorrect API key provided"),
-            (429, "rate_limit_exceeded", "Rate limit reached"),
-            (500, "server_error", "The server had an error"),
+        for (status, error_type, message, code) in [
+            (
+                401,
+                "invalid_request_error",
+                "Incorrect API key provided",
+                "authentication",
+            ),
+            (
+                429,
+                "rate_limit_exceeded",
+                "Rate limit reached",
+                "rate_limited",
+            ),
+            (
+                500,
+                "server_error",
+                "The server had an error",
+                "provider_server_error",
+            ),
         ] {
             let server = MockServer::start().await;
             Mock::given(method("POST"))
@@ -111,20 +126,15 @@ fn openai_error_statuses_map_to_provider_error() {
                 .await
                 .unwrap_err();
 
-            match err {
-                Error::Provider {
-                    provider,
-                    status: got_status,
-                    error_type: got_type,
-                    message: got_message,
-                } => {
-                    assert_eq!(provider, "openai");
-                    assert_eq!(got_status, status);
-                    assert_eq!(got_type.as_deref(), Some(error_type));
-                    assert_eq!(got_message, message);
-                }
-                other => panic!("expected Provider error, got {other:?}"),
-            }
+            // The failure classified onto its own variant, and the
+            // provider's own spelling retained beside it.
+            assert_eq!(err.code(), code, "{status} classified wrong");
+            assert_eq!(err.origin(), Origin::Provider);
+            let upstream = err.provider_error().expect("a provider failure");
+            assert_eq!(upstream.provider, "openai");
+            assert_eq!(upstream.status, status);
+            assert_eq!(upstream.error_type.as_deref(), Some(error_type));
+            assert_eq!(upstream.message, message);
         }
     });
 }
@@ -168,19 +178,13 @@ fn unparseable_error_body_falls_back_to_raw_text() {
             .chat_completion(request("openai/gpt-5.6"))
             .await
             .unwrap_err();
-        match err {
-            Error::Provider {
-                status,
-                error_type,
-                message,
-                ..
-            } => {
-                assert_eq!(status, 503);
-                assert_eq!(error_type, None);
-                assert_eq!(message, "upstream overloaded");
-            }
-            other => panic!("expected Provider error, got {other:?}"),
-        }
+        assert!(matches!(err, Error::Overloaded(_)), "{err:?}");
+        let upstream = err.provider_error().expect("a provider failure");
+        assert_eq!(upstream.status, 503);
+        assert_eq!(upstream.error_type, None);
+        assert_eq!(upstream.message, "upstream overloaded");
+        // Nothing parsed, so the raw body is the only evidence.
+        assert_eq!(upstream.raw_body, "upstream overloaded");
     });
 }
 

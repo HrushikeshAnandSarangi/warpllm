@@ -1,9 +1,15 @@
 //! Shared primitives for the gateway types.
 
+pub(crate) mod error;
 pub(crate) mod message;
 pub(crate) mod request;
 pub(crate) mod response;
 
+/// `pub`, not `pub(crate)` like its siblings, so `lib.rs` can re-export these
+/// three. It leaks nothing on its own — `crate::gateway` is a private module,
+/// so the only way out is that re-export, the same arrangement `registry`
+/// uses for its specs.
+pub use error::*;
 pub(crate) use message::*;
 pub(crate) use request::*;
 pub(crate) use response::*;
@@ -15,11 +21,11 @@ use serde_json::Value;
 
 use crate::types::Protocol;
 
-/// Namespaced passthrough bags, keyed by dialect name (`"openai_compat"`)
-/// or provider name (`"deepseek"`). Renderers emit the dialect namespace
-/// only when the target speaks that dialect, then overlay the target
+/// Namespaced passthrough bags, keyed by protocol name (`"openai_compat"`)
+/// or provider name (`"deepseek"`). Renderers emit the protocol namespace
+/// only when the target speaks that protocol, then overlay the target
 /// provider's namespace — a field meant for one provider never leaks into
-/// another. Provider names shadowing dialect names are reserved.
+/// another. Provider names shadowing protocol names are reserved.
 pub(crate) type ProviderExt = BTreeMap<String, Value>;
 
 /// Exact JSON text, never a parsed tree at rest.
@@ -39,7 +45,7 @@ impl RawJson {
 
     /// For ingest from providers that send objects: serialize ONCE at the
     /// boundary (preserve_order keeps the provider's key order).
-    #[allow(dead_code)] // staged: used by the first object-arguments dialect
+    #[allow(dead_code)] // staged: used by the first object-arguments protocol
     pub(crate) fn from_value(value: &Value) -> Self {
         Self(value.to_string())
     }
@@ -58,13 +64,13 @@ impl RawJson {
 }
 
 /// Where a gateway value came from. Retained so adapters can one day
-/// take a same-dialect passthrough fast path, and for diffing what was
+/// take a same-protocol passthrough fast path, and for diffing what was
 /// received against what was sent. Not part of the canonical JSON form.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // staged: read once the passthrough fast path lands
 pub(crate) struct IngestSource {
-    /// The wire format this was ingested from. [`Protocol`] rather than a
-    /// separate `Dialect` enum: the name that keys the `ext` bags, the name the
+    /// The wire format this was ingested from. [`Protocol`] rather than an
+    /// enum of its own: the name that keys the `ext` bags, the name the
     /// registry YAML uses, and the name of the format are one string, so they
     /// are one type.
     pub protocol: Protocol,

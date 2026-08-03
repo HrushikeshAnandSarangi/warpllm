@@ -1,4 +1,4 @@
-//! Protocols: the wire shapes each dialect defines, and the transport that
+//! Protocols: the wire shapes each protocol defines, and the transport that
 //! puts them on the wire. A protocol owns its request/response types, its HTTP
 //! binding (URL, auth scheme), and its error envelope.
 //!
@@ -16,7 +16,7 @@
 //!
 //! The names themselves — [`crate::types::Protocol`] and `Api` — are declared
 //! in `crate::types`, above this module and `crate::gateway` both, since both
-//! layers speak them and neither owns them. What lives here are the dialects
+//! layers speak them and neither owns them. What lives here are the protocols
 //! those names refer to.
 //!
 //! Provider-specific logic does NOT live here either: per-model specs are

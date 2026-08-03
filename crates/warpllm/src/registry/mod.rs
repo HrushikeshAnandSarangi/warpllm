@@ -80,6 +80,18 @@ pub fn fetch_model(model_str: &str) -> Result<(&'static ProviderSpec, &'static M
     })
 }
 
+/// Whether the roster holds a provider under this exact name.
+///
+/// Test-only, and that is the point: nothing at runtime should reach a
+/// provider by bare name — [`fetch_model`] hands back the spec. This exists
+/// so a table keyed by provider name, like the per-provider error overrides,
+/// can be checked against the roster rather than silently never matching
+/// after a rename.
+#[cfg(test)]
+pub(crate) fn is_registered(provider: &str) -> bool {
+    REGISTRY.providers.contains_key(provider)
+}
+
 /// The model row filed under `model_str`, and the provider row it names.
 ///
 /// One hash lookup, then a second. There is no second chance at the first: a

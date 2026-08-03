@@ -1,5 +1,5 @@
 //! The four conversions for `Api::ChatCompletions` in the OpenAI-compatible
-//! dialect. Ingest is lossless; render out may be lossy, and says so where it
+//! protocol. Ingest is lossless; render out may be lossy, and says so where it
 //! is.
 
 mod exchange;

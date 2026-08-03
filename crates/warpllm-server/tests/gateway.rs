@@ -144,8 +144,59 @@ fn upstream_status_and_error_type_pass_through() {
     with_gateway_key(async {
         let upstream = MockServer::start().await;
         Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "30")
+                    .insert_header("x-request-id", "req-upstream-1")
+                    .set_body_json(json!({
+                        "error": {"message": "Rate limit reached", "type": "rate_limit_exceeded"}
+                    })),
+            )
+            .mount(&upstream)
+            .await;
+        let gateway = spawn_app(&upstream.uri()).await;
+
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/v1/chat/completions"))
+            .json(&request_body())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 429);
+        // The upstream's own Retry-After is re-emitted as a real header:
+        // standard clients and proxies back off on the header and never
+        // read warpllm's JSON.
+        assert_eq!(
+            response.headers().get("retry-after").unwrap(),
+            "30",
+            "the upstream's Retry-After did not survive the gateway"
+        );
+
+        let body: Value = response.json().await.unwrap();
+        // `type` keeps its OpenAI meaning for official SDKs; `code` and
+        // `origin` are warpllm's flat taxonomy beside it.
+        assert_eq!(body["error"]["type"], "rate_limit_exceeded");
+        assert_eq!(body["error"]["code"], "rate_limited");
+        assert_eq!(body["error"]["origin"], "provider");
+        assert_eq!(body["error"]["retry_after_seconds"], 30);
+        assert_eq!(body["error"]["request_id"], "req-upstream-1");
+    });
+}
+
+/// The finding this split exists for, end to end through the HTTP gateway:
+/// a quota exhaustion arrives as a 429 and reads exactly like a rate limit,
+/// so a caller reading only the status backs off against a billing problem.
+#[test]
+fn quota_exhaustion_is_not_reported_as_a_rate_limit() {
+    with_gateway_key(async {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(429).set_body_json(json!({
-                "error": {"message": "Rate limit reached", "type": "rate_limit_exceeded"}
+                "error": {
+                    "message": "You exceeded your current quota",
+                    "type": "insufficient_quota",
+                    "code": "insufficient_quota"
+                }
             })))
             .mount(&upstream)
             .await;
@@ -159,8 +210,13 @@ fn upstream_status_and_error_type_pass_through() {
             .unwrap();
         assert_eq!(response.status(), 429);
         let body: Value = response.json().await.unwrap();
-        assert_eq!(body["error"]["code"], "provider_error");
-        assert_eq!(body["error"]["type"], "rate_limit_exceeded");
+        assert_eq!(
+            body["error"]["code"], "quota_exceeded",
+            "reported as a rate limit, a backoff loop never resolves this"
+        );
+        assert_eq!(body["error"]["origin"], "provider");
+        // The code that produced the classification is retained.
+        assert_eq!(body["error"]["provider_code"], "insufficient_quota");
     });
 }
 
@@ -202,6 +258,7 @@ async fn invalid_model_and_invalid_json_are_400s() {
     assert_eq!(response.status(), 400);
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["error"]["code"], "invalid_request");
+    assert_eq!(body["error"]["origin"], "gateway");
     assert!(
         body["error"]["message"]
             .as_str()
@@ -219,6 +276,7 @@ async fn invalid_model_and_invalid_json_are_400s() {
     assert_eq!(response.status(), 400);
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["error"]["code"], "invalid_request");
+    assert_eq!(body["error"]["origin"], "gateway");
 }
 
 /// Exercises the `serve` entry point the binary and bindings share: boots

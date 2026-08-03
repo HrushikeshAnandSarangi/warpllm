@@ -12,7 +12,12 @@ pub mod types;
 
 pub use client::Client;
 pub use config::ClientConfig;
-pub use error::{Error, Result};
+pub use error::{Error, Origin, Result};
+/// The gateway's canonical form for an upstream failure — the error-side
+/// counterpart to the request and response forms, and the payload every
+/// provider-driven [`Error`] variant carries. `gateway` itself stays private,
+/// exactly as `registry` does; this is its only public shape.
+pub use gateway::types::ProviderError;
 pub use protocol::openai_compat::chat_completions::types::*;
 /// The registry's public face: a provider, a model, and the lookup that hands
 /// back one of each. `registry` itself stays private — the roster, the schema,

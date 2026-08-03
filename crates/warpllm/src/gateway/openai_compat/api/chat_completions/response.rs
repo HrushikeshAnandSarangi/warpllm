@@ -1,6 +1,6 @@
 //! Response conversions: OpenAI-compatible wire → gateway (ingest) and
 //! gateway → wire (render). Round trips are lossless with zero
-//! permitted transformations: dialect-specific fields (`object`,
+//! permitted transformations: protocol-specific fields (`object`,
 //! `service_tier`, choice `index`, `refusal`, …) ride
 //! `ext["openai_compat"]` at their nesting level and are restored
 //! verbatim.
@@ -18,7 +18,7 @@ use crate::protocol::openai_compat::chat_completions::types::{
 };
 use crate::types::Protocol;
 
-use super::super::{merged_ext, namespaced, role_from_wire, role_to_wire};
+use crate::gateway::openai_compat::{merged_ext, namespaced, role_from_wire, role_to_wire};
 
 /// Permissive and infallible; the exhaustive destructures at every level
 /// make dropping a newly-typed wire field a compile error.
@@ -149,10 +149,10 @@ fn ingest_message(message: ChatCompletionResponseMessage) -> types::Message {
 /// PROMOTE BUT RETAIN: the caller keeps `unknown_fields` intact, so the field
 /// still rides `ext["openai_compat"]` and the renderer replays it verbatim.
 /// Nothing could rebuild it from the block — `render_message` drops Reasoning
-/// blocks, because the dialect has no field to render them into. `ext` is what
+/// blocks, because the protocol has no field to render them into. `ext` is what
 /// the provider said; the block is what it means.
 ///
-/// `provenance` records the dialect rather than a hand-written identifier:
+/// `provenance` records the protocol rather than a hand-written identifier:
 /// [`Protocol::as_str`] is one drift-tested string, so it cannot disagree with
 /// the namespace the same field is filed under.
 fn reasoning_block(fields: &UnknownFields) -> Option<ContentBlock> {
@@ -165,7 +165,7 @@ fn reasoning_block(fields: &UnknownFields) -> Option<ContentBlock> {
     Some(ContentBlock::Reasoning {
         detail: ReasoningDetail::Text {
             text: text.to_string(),
-            // No provider on this dialect publishes a signature for it.
+            // No provider on this protocol publishes a signature for it.
             signature: None,
         },
         provenance: Some(Protocol::OpenAiCompat.as_str().to_string()),
@@ -233,7 +233,7 @@ fn ingest_usage(usage: CompletionUsage) -> types::Usage {
     }
 }
 
-/// Infallible: dialect fields restore from ext (a hook that corrupted a
+/// Infallible: protocol fields restore from ext (a hook that corrupted a
 /// stashed value beyond its wire type falls back to dropping that field).
 pub(crate) fn render_response(
     response: &types::ChatResponse,
@@ -242,14 +242,15 @@ pub(crate) fn render_response(
     let mut unknown_fields = merged_ext(&response.ext, provider);
     let object =
         take_string(&mut unknown_fields, "object").unwrap_or_else(|| "chat.completion".to_string());
+    let choices = response
+        .completions
+        .iter()
+        .enumerate()
+        .map(|(position, completion)| render_choice(completion, position, provider))
+        .collect();
     CreateChatCompletionResponse {
         id: response.id.clone(),
-        choices: response
-            .completions
-            .iter()
-            .enumerate()
-            .map(|(position, completion)| render_choice(completion, position, provider))
-            .collect(),
+        choices,
         created: response.created.unwrap_or(0),
         model: response.model.clone(),
         object,
@@ -307,11 +308,13 @@ fn render_message(message: &types::Message, provider: &str) -> ChatCompletionRes
                 if let Ok(call) = serde_json::from_value(value.clone()) {
                     tool_calls.push(call);
                 }
-                // A non-tool-call Unknown block is cross-dialect residue
-                // with no compat rendering; dropping it is the documented
-                // lossy-out path.
             }
-            // Reasoning/media blocks only exist cross-dialect; same story.
+            // A Reasoning block was lifted out of `reasoning_content`,
+            // which is still sitting in ext and about to be emitted
+            // verbatim — PROMOTE BUT RETAIN, read from the other end, so
+            // dropping the block loses nothing. Media and tool results have
+            // no rendering on this protocol at all; they can only arise
+            // cross-protocol, which warpllm does not do yet.
             _ => {}
         }
     }
@@ -320,8 +323,8 @@ fn render_message(message: &types::Message, provider: &str) -> ChatCompletionRes
         unknown_fields.remove("tool_calls");
     }
     ChatCompletionResponseMessage {
-        // Same-dialect messages carry at most one text block, so the join
-        // is exact; joining >1 only occurs cross-dialect.
+        // Same-protocol messages carry at most one text block, so the join
+        // is exact; joining >1 only occurs cross-protocol.
         content: (!texts.is_empty()).then(|| texts.join("\n")),
         refusal: take_string(&mut unknown_fields, "refusal"),
         role,
@@ -558,7 +561,7 @@ mod tests {
     fn plain_function_tool_call_becomes_toolcall_block() {
         let normalized = ingest_response(parse(maximal_body()));
         let content = &normalized.completions[0].message.content;
-        // The block order this dialect produces: promoted reasoning, then the
+        // The block order this protocol produces: promoted reasoning, then the
         // text, then tool calls in array order.
         assert!(matches!(&content[0], ContentBlock::Reasoning { .. }));
         assert!(matches!(&content[1], ContentBlock::Text { text, .. } if text == "Hello there!"));
@@ -644,7 +647,7 @@ mod tests {
         assert_eq!(serde_json::to_value(&rendered).unwrap(), body);
     }
 
-    /// Promoted for any provider on this dialect — which providers emit it is
+    /// Promoted for any provider on this protocol — which providers emit it is
     /// not a list warpllm keeps — and ordered before the answer it led to.
     #[test]
     fn reasoning_content_becomes_a_reasoning_block_before_the_answer() {
@@ -707,7 +710,7 @@ mod tests {
     }
 
     #[test]
-    fn dialect_extras_land_in_ext() {
+    fn protocol_extras_land_in_ext() {
         let normalized = ingest_response(parse(maximal_body()));
         let ext = &normalized.ext["openai_compat"];
         assert_eq!(ext["object"], "chat.completion");
@@ -729,5 +732,56 @@ mod tests {
         let source = normalized.source.as_ref().unwrap();
         assert_eq!(source.protocol, Protocol::OpenAiCompat);
         assert_eq!(source.body, serde_json::to_value(&wire).unwrap());
+    }
+
+    /// A block this protocol has no field for is dropped, and the rest of
+    /// the message still renders. Only reachable cross-protocol, which
+    /// warpllm does not do yet — pinned so the behavior is stated rather
+    /// than discovered.
+    #[test]
+    fn a_block_with_no_rendering_is_dropped_and_the_rest_survives() {
+        let mut normalized = ingest_response(parse(maximal_body()));
+        normalized.completions[0].message.content = vec![
+            ContentBlock::Text {
+                text: "here it is".into(),
+                cache: None,
+            },
+            ContentBlock::Image {
+                source: crate::gateway::types::MediaSource::Url {
+                    url: "https://example.com/a.png".into(),
+                },
+                detail: None,
+                cache: None,
+            },
+        ];
+
+        let rendered = render_response(&normalized, "openai");
+        assert_eq!(
+            rendered.choices[0].message.content.as_deref(),
+            Some("here it is")
+        );
+    }
+
+    /// PROMOTE BUT RETAIN, read from the render side: the Reasoning block
+    /// is dropped, but the `reasoning_content` it was lifted out of is
+    /// still in ext and comes back verbatim — which is why dropping the
+    /// block loses nothing.
+    #[test]
+    fn a_dropped_reasoning_block_still_renders_from_ext() {
+        let normalized = ingest_response(parse(maximal_body()));
+        assert!(
+            normalized.completions[0]
+                .message
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::Reasoning { .. })),
+            "the fixture no longer exercises the retained-reasoning path"
+        );
+
+        let rendered = render_response(&normalized, "openai");
+        assert_eq!(
+            rendered.choices[0].message.unknown_fields["reasoning_content"],
+            json!("step by step")
+        );
     }
 }

@@ -78,7 +78,7 @@ pub(crate) enum ToolChoice {
 /// Store what the caller sent, unconverted. Only the params with a typed
 /// home on every supported wire live here; everything else (seed, top_k,
 /// penalties, ...) rides the namespaced ext bags untouched until a second
-/// dialect needs to render them differently.
+/// protocol needs to render them differently.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct GenerationParams {
     pub max_tokens: Option<u32>,
@@ -88,8 +88,8 @@ pub(crate) struct GenerationParams {
     pub stop: Vec<String>,
 }
 
-/// Unified over provider thinking budgets / reasoning-effort dialects,
-/// carrying BOTH so cross-dialect conversion is an explicit render action.
+/// Unified over provider thinking budgets / reasoning-effort spellings,
+/// carrying BOTH so cross-protocol conversion is an explicit render action.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct ReasoningConfig {
     #[serde(skip_serializing_if = "Option::is_none")]

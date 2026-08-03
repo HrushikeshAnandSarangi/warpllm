@@ -2,7 +2,7 @@
 //! shapes in [`types`], the HTTP binding in `transport`.
 //!
 //! The conversions to and from the gateway forms live at
-//! `crate::gateway::openai_compat::chat_completions`.
+//! `crate::gateway::openai_compat::api::chat_completions`.
 
 pub mod types;
 

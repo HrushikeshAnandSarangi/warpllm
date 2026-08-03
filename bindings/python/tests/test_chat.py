@@ -1,9 +1,12 @@
 import pytest
 from pytest_httpserver import HTTPServer
 from warpllm import (
+    APIStatusError,
     AuthenticationError,
     ChatCompletion,
     InvalidRequestError,
+    QuotaExceededError,
+    RateLimitError,
     WarpLLM,
 )
 
@@ -77,6 +80,120 @@ def test_401_raises_authentication_error(
     assert exc_info.value.status_code == 401
     assert exc_info.value.provider == "openai"
     assert "Incorrect API key" in str(exc_info.value)
+    # The normalized taxonomy, and the provider's own spelling beside it.
+    assert exc_info.value.code == "authentication"
+    assert exc_info.value.error_type == "invalid_request_error"
+
+
+def test_quota_exhaustion_is_not_raised_as_a_rate_limit(
+    client: WarpLLM, httpserver: HTTPServer
+):
+    """A quota exhaustion arrives as a 429 and reads exactly like a rate
+    limit, but no amount of backing off buys credit.
+
+    `except RateLimitError` must NOT catch it — that is how a billing
+    failure becomes an infinite retry loop.
+    """
+    httpserver.expect_request("/chat/completions").respond_with_json(
+        {
+            "error": {
+                "message": "You exceeded your current quota",
+                "type": "invalid_request_error",
+                "code": "insufficient_quota",
+            }
+        },
+        status=429,
+    )
+
+    with pytest.raises(QuotaExceededError) as exc_info:
+        client.chat.completions.create(
+            model="openai/gpt-5.6", messages=MESSAGES
+        )
+    error = exc_info.value
+    assert not isinstance(
+        error, RateLimitError
+    ), "a backoff loop written against RateLimitError would swallow this"
+    assert error.status_code == 429
+    assert error.code == "quota_exceeded"
+    # The evidence the classification was read from survives.
+    assert error.provider_code == "insufficient_quota"
+
+
+def test_rate_limit_carries_the_providers_retry_after(
+    client: WarpLLM, httpserver: HTTPServer
+):
+    """The provider's own delay and request id reach the caller — both live
+    only in headers, so they prove the transport kept them."""
+    httpserver.expect_request("/chat/completions").respond_with_json(
+        {
+            "error": {
+                "message": "Rate limit reached",
+                "type": "rate_limit_error",
+            }
+        },
+        status=429,
+        headers={"Retry-After": "30", "x-request-id": "req-abc"},
+    )
+
+    with pytest.raises(RateLimitError) as exc_info:
+        client.chat.completions.create(
+            model="openai/gpt-5.6", messages=MESSAGES
+        )
+    error = exc_info.value
+    assert error.code == "rate_limited"
+    assert error.retry_after_seconds == 30
+    assert error.request_id == "req-abc"
+
+
+def test_context_overflow_is_classified(
+    client: WarpLLM, httpserver: HTTPServer
+):
+    """A context overflow must not read as a plain bad request: the remedy
+    is a shorter prompt or a bigger model, not a corrected payload."""
+    httpserver.expect_request("/chat/completions").respond_with_json(
+        {
+            "error": {
+                "message": "maximum context length is 8192 tokens",
+                "type": "invalid_request_error",
+                "code": "context_length_exceeded",
+            }
+        },
+        status=400,
+    )
+
+    with pytest.raises(APIStatusError) as exc_info:
+        client.chat.completions.create(
+            model="openai/gpt-5.6", messages=MESSAGES
+        )
+    assert exc_info.value.code == "context_length_exceeded"
+
+
+def test_origin_separates_the_providers_failures_from_warpllms(
+    client: WarpLLM, httpserver: HTTPServer
+):
+    """The two halves of one flat code space. A provider rejecting the
+    request and warpllm rejecting it read almost alike, and the remedy is
+    not the same — one edits the payload, the other may just need a
+    different model."""
+    httpserver.expect_request("/chat/completions").respond_with_json(
+        {"error": {"message": "bad payload", "type": "invalid_request_error"}},
+        status=400,
+    )
+
+    with pytest.raises(APIStatusError) as exc_info:
+        client.chat.completions.create(
+            model="openai/gpt-5.6", messages=MESSAGES
+        )
+    assert exc_info.value.origin == "provider"
+    assert exc_info.value.code == "provider_invalid_request"
+
+    # ...and warpllm's own rejection never left the process.
+    with pytest.raises(InvalidRequestError) as local:
+        client.chat.completions.create(
+            model="mistral/large", messages=MESSAGES
+        )
+    assert local.value.origin == "gateway"
+    assert local.value.code == "invalid_request"
 
 
 def test_unknown_provider_rejected(client: WarpLLM):

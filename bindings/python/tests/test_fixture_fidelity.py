@@ -33,5 +33,5 @@ def test_fixtures_exist():
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
 def test_fixture_hydrates_losslessly(path: Path):
     body = json.loads(path.read_text())
-    completion = ChatCompletion.from_dict(body)
-    assert _prune_nones(dataclasses.asdict(completion)) == _prune_nones(body)
+    hydrated = dataclasses.asdict(ChatCompletion.from_dict(body))
+    assert _prune_nones(hydrated) == _prune_nones(body)

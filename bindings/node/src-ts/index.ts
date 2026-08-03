@@ -6,6 +6,8 @@ export {
   AuthenticationError,
   InvalidRequestError,
   NotImplementedError,
+  PermissionDeniedError,
+  QuotaExceededError,
   RateLimitError,
   WarpLLMError,
 } from './errors.js'

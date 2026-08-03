@@ -7,8 +7,8 @@ use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// `reasoning_content` is promoted to a normalized Reasoning block by the
-/// dialect's own ingest, for every provider (unit-tested in
-/// `gateway::openai_compat::chat_completions::response`). This is the other
+/// protocol's own ingest, for every provider (unit-tested in
+/// `gateway::openai_compat::api::chat_completions::response`). This is the other
 /// half of that contract, asserted here because DeepSeek is the provider that
 /// actually sends the field: it must ALSO still reach the caller byte-for-byte.
 ///
@@ -167,14 +167,11 @@ fn deepseek_errors_name_deepseek() {
             .await
             .unwrap_err();
 
-        match err {
-            Error::Provider {
-                provider, status, ..
-            } => {
-                assert_eq!(provider, "deepseek");
-                assert_eq!(status, 429);
-            }
-            other => panic!("expected Provider error, got {other:?}"),
-        }
+        // Classified by the protocol, so a second provider on it inherits
+        // the taxonomy without a line of Rust.
+        assert!(matches!(err, Error::RateLimited(_)), "{err:?}");
+        let upstream = err.provider_error().expect("a provider failure");
+        assert_eq!(upstream.provider, "deepseek");
+        assert_eq!(upstream.status, 429);
     });
 }

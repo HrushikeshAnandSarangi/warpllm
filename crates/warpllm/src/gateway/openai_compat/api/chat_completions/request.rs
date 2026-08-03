@@ -10,7 +10,7 @@ use crate::protocol::openai_compat::chat_completions::types::{
 };
 use crate::types::Protocol;
 
-use super::super::{merged_ext, namespaced, role_from_wire, role_to_wire};
+use crate::gateway::openai_compat::{merged_ext, namespaced, role_from_wire, role_to_wire};
 
 /// Permissive and infallible: capture, don't validate. `model` is the
 /// prefix-stripped name from `parse_model`; `stream` is resolved before
@@ -82,9 +82,10 @@ fn ingest_message(message: ChatCompletionRequestMessage) -> types::Message {
 /// Renders the gateway request back onto the wire. Mechanical by
 /// design: nothing is filtered against what the target documents — the
 /// provider is the authority on its own parameters and rejects what it
-/// doesn't accept. Same-dialect round trips are lossless modulo three
+/// doesn't accept. Same-protocol round trips are lossless modulo three
 /// documented transformations: the provider prefix is stripped from
-/// `model`, `stream` is dropped, and an empty `stop` list is omitted.
+/// `model`, `stream` is dropped, and an empty `stop` list is omitted, each
+/// of them exactly reversible or resolved before ingest.
 pub(crate) fn render_request(
     request: &types::ChatRequest,
     provider: &'static str,
@@ -139,7 +140,7 @@ fn render_message(
     for block in &message.content {
         match block {
             ContentBlock::Text { text, .. } => texts.push(text.as_str()),
-            // Only reachable cross-dialect; typed rendering is the
+            // Only reachable cross-protocol; typed rendering is the
             // documented follow-up alongside the wire-type expansion.
             _ => {
                 return Err(Error::NotImplemented(
@@ -150,8 +151,8 @@ fn render_message(
     }
     Ok(ChatCompletionRequestMessage {
         role,
-        // Same-dialect messages carry exactly one text block, so the join
-        // is exact; joining >1 only occurs cross-dialect.
+        // Same-protocol messages carry exactly one text block, so the join
+        // is exact; joining >1 only occurs cross-protocol.
         content: texts.join("\n"),
         unknown_fields,
     })
@@ -251,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn ingest_keeps_passthrough_fields_in_the_dialect_namespace() {
+    fn ingest_keeps_passthrough_fields_in_the_protocol_namespace() {
         let normalized = ingest_request(full_wire_request(), "gpt-5.6");
         // Every field without a typed wire home rides ext verbatim.
         assert_eq!(normalized.ext["openai_compat"]["top_k"], json!(40));
@@ -282,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn render_merges_provider_ext_namespace_over_source_dialect() {
+    fn render_merges_provider_ext_namespace_over_source_protocol() {
         let mut normalized = ingest_request(full_wire_request(), "deepseek-v4-flash");
         normalized.ext.insert(
             "deepseek".into(),
@@ -290,7 +291,7 @@ mod tests {
         );
 
         let for_deepseek = render_request(&normalized, "deepseek").unwrap();
-        // The provider namespace overlays the dialect namespace...
+        // The provider namespace overlays the protocol namespace...
         assert_eq!(
             for_deepseek.unknown_fields["vendor_beta"],
             json!("ds-version")

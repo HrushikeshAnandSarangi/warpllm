@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, expect, test } from 'vitest'
 
 import {
+  APIStatusError,
   AuthenticationError,
   InvalidRequestError,
   NotImplementedError,
+  QuotaExceededError,
+  RateLimitError,
   WarpLLM,
 } from '../dist/index.js'
 import { MockServer } from './mock-server.js'
@@ -90,6 +93,93 @@ test('401 rejects with AuthenticationError', async () => {
   expect((err as AuthenticationError).status).toBe(401)
   expect((err as AuthenticationError).provider).toBe('openai')
   expect((err as AuthenticationError).message).toContain('Incorrect API key')
+  // The normalized taxonomy, and the provider's own spelling beside it.
+  expect((err as AuthenticationError).code).toBe('authentication')
+  expect((err as AuthenticationError).errorType).toBe('invalid_request_error')
+})
+
+// A quota exhaustion arrives as a 429 and reads exactly like a rate limit,
+// but no amount of backing off buys credit. `instanceof RateLimitError` must
+// NOT match it — that is how a billing failure becomes an infinite retry
+// loop.
+test('quota exhaustion does not reject with RateLimitError', async () => {
+  server.respondWith(429, {
+    error: {
+      message: 'You exceeded your current quota',
+      type: 'invalid_request_error',
+      code: 'insufficient_quota',
+    },
+  })
+
+  const err = (await client.chat.completions
+    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
+    .catch((e: unknown) => e)) as QuotaExceededError
+
+  expect(err).toBeInstanceOf(QuotaExceededError)
+  expect(err).not.toBeInstanceOf(RateLimitError)
+  expect(err.status).toBe(429)
+  expect(err.code).toBe('quota_exceeded')
+  // The evidence the classification was read from survives.
+  expect(err.providerCode).toBe('insufficient_quota')
+})
+
+test('a rate limit carries the provider’s retry-after and request id', async () => {
+  server.respondWith(
+    429,
+    { error: { message: 'Rate limit reached', type: 'rate_limit_error' } },
+    { 'retry-after': '30', 'x-request-id': 'req-abc' },
+  )
+
+  const err = (await client.chat.completions
+    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
+    .catch((e: unknown) => e)) as RateLimitError
+
+  expect(err).toBeInstanceOf(RateLimitError)
+  expect(err.code).toBe('rate_limited')
+  // Both live only in headers, so they prove the transport kept them.
+  expect(err.retryAfterSeconds).toBe(30)
+  expect(err.requestId).toBe('req-abc')
+})
+
+// A context overflow must not read as a plain bad request: the remedy is a
+// shorter prompt or a bigger model, not a corrected payload.
+test('context overflow is classified', async () => {
+  server.respondWith(400, {
+    error: {
+      message: 'maximum context length is 8192 tokens',
+      type: 'invalid_request_error',
+      code: 'context_length_exceeded',
+    },
+  })
+
+  const err = await client.chat.completions
+    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
+    .catch((e: unknown) => e)
+
+  expect(err).toBeInstanceOf(APIStatusError)
+  expect((err as APIStatusError).code).toBe('context_length_exceeded')
+})
+
+// The two halves of one flat code space. A provider rejecting the request
+// and warpllm rejecting it read almost alike, and the remedy is not the
+// same — one edits the payload, the other may just need a different model.
+test('origin separates the provider’s failures from warpllm’s', async () => {
+  server.respondWith(400, {
+    error: { message: 'bad payload', type: 'invalid_request_error' },
+  })
+
+  const upstream = (await client.chat.completions
+    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
+    .catch((e: unknown) => e)) as APIStatusError
+  expect(upstream.origin).toBe('provider')
+  expect(upstream.code).toBe('provider_invalid_request')
+
+  // ...and warpllm's own rejection never left the process.
+  const local = (await client.chat.completions
+    .create({ model: 'mistral/large', messages: MESSAGES })
+    .catch((e: unknown) => e)) as InvalidRequestError
+  expect(local.origin).toBe('gateway')
+  expect(local.code).toBe('invalid_request')
 })
 
 test('invalid model rejects unsupported provider', async () => {

@@ -6,6 +6,8 @@ from ._exceptions import (
     APIStatusError,
     AuthenticationError,
     InvalidRequestError,
+    PermissionDeniedError,
+    QuotaExceededError,
     RateLimitError,
     WarpLLMError,
 )
@@ -63,6 +65,8 @@ __all__ = [
     "ModerationResult",
     "ModerationResults",
     "PromptTokensDetails",
+    "PermissionDeniedError",
+    "QuotaExceededError",
     "RateLimitError",
     "TopLogprob",
     "WarpLLM",

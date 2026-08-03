@@ -57,7 +57,7 @@ impl FinishReason {
 }
 
 /// Token accounting in the widest cross-provider units; fields a provider
-/// doesn't report stay `None`. Dialect-specific residue (detail objects,
+/// doesn't report stay `None`. Protocol-specific residue (detail objects,
 /// unknown fields) rides `ext` so rendering back is lossless.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct Usage {

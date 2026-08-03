@@ -10,6 +10,7 @@ export interface RecordedRequest {
 interface CannedResponse {
   status: number
   body: unknown
+  headers?: Record<string, string>
 }
 
 /** Minimal localhost HTTP mock: queue responses, record requests. */
@@ -39,7 +40,7 @@ export class MockServer {
           body: raw ? JSON.parse(raw) : undefined,
         })
         const next = mock.queue.shift() ?? { status: 404, body: { error: 'no canned response' } }
-        res.writeHead(next.status, { 'content-type': 'application/json' })
+        res.writeHead(next.status, { 'content-type': 'application/json', ...next.headers })
         res.end(JSON.stringify(next.body))
       })
     })
@@ -52,8 +53,11 @@ export class MockServer {
     return mock
   }
 
-  respondWith(status: number, body: unknown): void {
-    this.queue.push({ status, body })
+  /** `headers` covers the response metadata that lives nowhere in a body —
+   * `Retry-After`, the upstream request id — which the gateway has to carry
+   * through to the caller. */
+  respondWith(status: number, body: unknown, headers?: Record<string, string>): void {
+    this.queue.push({ status, body, headers })
   }
 
   async close(): Promise<void> {

@@ -3,20 +3,20 @@
 //!
 //! These live above both [`crate::protocol`] and [`crate::gateway`] rather than
 //! inside either, because both need them and neither owns them. [`Protocol`]
-//! names a dialect, keys the gateway `ext` bags, and is the word the registry
+//! names a protocol, keys the gateway `ext` bags, and is the word the registry
 //! YAML uses; [`Api`] names a surface and is the module path that implements it.
-//! Filing them under the dialect layer would make the canonical forms in
-//! `gateway::types` — which are supposed to be dialect-neutral — reach into the
-//! module tree that defines the dialects to name their own bag keys.
+//! Filing them under the protocol layer would make the canonical forms in
+//! `gateway::types` — which are supposed to be protocol-neutral — reach into the
+//! module tree that defines the protocols to name their own bag keys.
 //!
 //! Vocabulary, not data: the shapes that cross the wire are
-//! `protocol::<dialect>::<api>::types`, and their canonical counterparts are
+//! `protocol::<name>::<api>::types`, and their canonical counterparts are
 //! `gateway::types`. What is here is fieldless by nature — names, not payloads.
 
 /// How a provider's wire protocol is spoken. One variant per wire format,
 /// not per provider — the exhaustive `match` in `client.rs` stays small
 /// forever while adding a model is one entry in the registry YAML. A provider
-/// that diverges from its dialect is handled in that dialect's conversions,
+/// that diverges from its protocol is handled in that protocol's conversions,
 /// never with a variant of its own.
 ///
 /// `non_exhaustive` because this enum exists to grow: a new wire format is a
@@ -38,7 +38,7 @@ pub enum Protocol {
 }
 
 impl Protocol {
-    /// This dialect's name as a string: the spelling the registry YAML uses,
+    /// This protocol's name as a string: the spelling the registry YAML uses,
     /// and the key its passthrough fields are filed under in the gateway
     /// `ext` bags.
     ///
@@ -86,8 +86,9 @@ impl Protocol {
 /// live provider at request time.
 ///
 /// The snake_case name is also the module name that implements the API, so
-/// `chat_completions` is reached at `openai_compat::chat_completions` and the
-/// two cannot drift by a rename.
+/// `chat_completions` is reached at `protocol::openai_compat::chat_completions`
+/// and `gateway::openai_compat::api::chat_completions`, and the two cannot
+/// drift from the variant by a rename.
 ///
 /// `non_exhaustive` for the same reason as [`Protocol`]: this exists to grow
 /// as warpllm implements more of each provider's surface, and without it every

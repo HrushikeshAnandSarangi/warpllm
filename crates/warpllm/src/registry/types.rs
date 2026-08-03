@@ -39,7 +39,7 @@ pub(crate) struct Registry {
     pub(crate) models: HashMap<String, ModelSpec>,
 }
 
-/// One provider: where its API is, how to authenticate, what dialect it
+/// One provider: where its API is, how to authenticate, what protocol it
 /// speaks, and which surfaces it serves.
 ///
 /// Everything here is true of every model the provider serves. What varies

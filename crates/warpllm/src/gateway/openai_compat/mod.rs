@@ -2,11 +2,22 @@
 //! ([`crate::protocol::openai_compat`]) and the gateway forms, plus the
 //! vocabulary glue both directions share.
 //!
-//! One child module per API surface, named for its [`Api`](crate::Api)
-//! variant. The shapes being converted, and the transport that carries them,
-//! belong to the protocol module — this side owns only the translation.
+//! Three things, and the split is the point:
+//!
+//! * [`api`] — one module per API surface, named for its [`Api`](crate::Api)
+//!   variant. The base implementation every provider on this protocol gets.
+//! * [`error`] — the error envelope and its baseline mapping, protocol-wide
+//!   rather than per-surface because every endpoint here shares one shape.
+//! * [`provider_overrides`] — only where a named provider genuinely differs
+//!   from the two above. Empty for most providers, and that is the healthy
+//!   state.
+//!
+//! The shapes being converted, and the transport that carries them, belong to
+//! the protocol module — this side owns only the translation.
 
-pub(crate) mod chat_completions;
+pub(crate) mod api;
+pub(crate) mod error;
+mod provider_overrides;
 
 use serde_json::Value;
 
@@ -14,7 +25,7 @@ use crate::gateway::types::{ProviderExt, Role};
 use crate::protocol::openai_compat::chat_completions::types::UnknownFields;
 use crate::types::Protocol;
 
-/// Flattens the ext bags relevant to this render target: the dialect
+/// Flattens the ext bags relevant to this render target: the protocol
 /// namespace first (the target speaks it), overlaid by the provider's own
 /// namespace. Other providers' namespaces are ignored — a field meant for
 /// one provider never leaks into another.
@@ -30,8 +41,8 @@ pub(crate) fn merged_ext(ext: &ProviderExt, provider: &str) -> UnknownFields {
     merged
 }
 
-/// The inverse of [`merged_ext`] for the dialect's own namespace: untyped wire
-/// fields go in under this dialect's name, so a renderer for another dialect
+/// The inverse of [`merged_ext`] for the protocol's own namespace: untyped wire
+/// fields go in under this protocol's name, so a renderer for another protocol
 /// knows not to emit them. An empty bag is omitted rather than stored as an
 /// empty object.
 pub(crate) fn namespaced(fields: UnknownFields) -> ProviderExt {
@@ -82,7 +93,7 @@ mod tests {
         let mut ext = ProviderExt::new();
         ext.insert(
             Protocol::OpenAiCompat.as_str().into(),
-            json!({"shared": "from-dialect", "dialect_only": 1}),
+            json!({"shared": "from-protocol", "protocol_only": 1}),
         );
         ext.insert(
             "deepseek".into(),
@@ -94,9 +105,9 @@ mod tests {
         assert_eq!(
             merged["shared"],
             json!("from-provider"),
-            "the provider namespace must overlay the dialect's"
+            "the provider namespace must overlay the protocol's"
         );
-        assert_eq!(merged["dialect_only"], json!(1));
+        assert_eq!(merged["protocol_only"], json!(1));
         assert_eq!(merged["ds_only"], json!(2));
         assert!(
             merged.get("mistral_only").is_none(),
@@ -112,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn namespaced_files_fields_under_the_dialect_name() {
+    fn namespaced_files_fields_under_the_protocol_name() {
         let mut fields = UnknownFields::new();
         fields.insert("seed".into(), json!(7));
 
@@ -143,13 +154,13 @@ mod tests {
     }
 
     /// An unrecognized role keeps its exact wire spelling so ingest can stash
-    /// it and render can restore it — which is what makes a same-dialect round
+    /// it and render can restore it — which is what makes a same-protocol round
     /// trip lossless whatever role it lands on.
     ///
     /// NOTE: it lands on [`Role::User`], while `Role::System`'s own doc claims
     /// System "covers OpenAI `system` AND `developer`". The two disagree. This
     /// test pins the CODE's behaviour, not the doc's claim; nothing observable
-    /// differs until a second dialect renders this message, since the raw
+    /// differs until a second protocol renders this message, since the raw
     /// spelling is restored verbatim for openai_compat either way.
     #[test]
     fn an_unknown_wire_role_returns_its_raw_spelling() {

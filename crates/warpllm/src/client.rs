@@ -48,16 +48,17 @@ impl Client {
         }
         let api_key = self.api_key(provider)?;
 
-        // Ingest answers to the dialect warpllm was CALLED with, which is
+        // Ingest answers to the protocol warpllm was CALLED with, which is
         // openai_compat and only ever will be for this entrypoint. The ENTRY's
         // model name goes in, not the caller's string: they differ whenever
         // warpllm's routing alias differs from the provider's own name.
-        let normalized = openai_compat::chat_completions::ingest_request(request, model.model());
+        let normalized =
+            openai_compat::api::chat_completions::ingest_request(request, model.model());
         // One arm per protocol, each `&ChatRequest -> ChatResponse`. Adding a
         // protocol is a line here plus its own `exchange`.
         let response = match provider.protocol() {
             Protocol::OpenAiCompat => {
-                openai_compat::chat_completions::exchange(
+                openai_compat::api::chat_completions::exchange(
                     &normalized,
                     &self.http,
                     provider.name(),
@@ -68,7 +69,7 @@ impl Client {
             }
         };
         let mut completion =
-            openai_compat::chat_completions::render_response(&response, provider.name());
+            openai_compat::api::chat_completions::render_response(&response, provider.name());
         // Echo the caller's provider-prefixed string, not the upstream echo.
         completion.model = requested_model;
         Ok(completion)
@@ -193,8 +194,9 @@ mod tests {
         };
         // What `chat_completion` does, minus the routing it already proved:
         // the SPEC's model name is what ingest is handed.
-        let normalized = openai_compat::chat_completions::ingest_request(request, aliased.model());
-        openai_compat::chat_completions::exchange(
+        let normalized =
+            openai_compat::api::chat_completions::ingest_request(request, aliased.model());
+        openai_compat::api::chat_completions::exchange(
             &normalized,
             &client.http,
             "demo",
@@ -251,8 +253,9 @@ mod tests {
             ..Default::default()
         };
         let (provider, model) = pair_for("openai/gpt-5.6");
-        let normalized = openai_compat::chat_completions::ingest_request(request, model.model());
-        openai_compat::chat_completions::exchange(
+        let normalized =
+            openai_compat::api::chat_completions::ingest_request(request, model.model());
+        openai_compat::api::chat_completions::exchange(
             &normalized,
             &client.http,
             provider.name(),

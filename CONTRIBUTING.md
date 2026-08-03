@@ -73,9 +73,11 @@ The two ideas worth knowing before you read the code:
   provider/model split and the rules the lint enforces — read it before adding
   either.
 * **`Protocol` has one variant per wire format, not per provider.** Providers
-  that speak the same dialect share it, and a provider that diverges is handled
-  in that dialect's conversions. This is why adding an OpenAI-compatible
-  provider is usually a registry edit and no new Rust.
+  that speak the same protocol share it, and a provider that diverges states
+  only its delta, under that protocol's `providers/` module. A provider that
+  matches its protocol implements nothing and inherits it whole — which is why
+  adding an OpenAI-compatible provider is usually a registry edit and no new
+  Rust. A backend whose wire SHAPE differs is a new protocol, not an override.
 
 ## Development Setup
 

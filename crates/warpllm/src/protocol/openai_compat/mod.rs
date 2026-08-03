@@ -2,7 +2,7 @@
 //! `Protocol::OpenAiCompat` is spoken through here, parameterized by the
 //! provider's name, base URL, and key.
 //!
-//! `openai_compat` is warpllm's OpenAI-*compatible* dialect: a permissive
+//! `openai_compat` is warpllm's OpenAI-*compatible* protocol: a permissive
 //! superset (unknown-field passthrough) of the OpenAI request, which many
 //! providers speak. The authoritative *OpenAI* shape is defined upstream in
 //! <https://github.com/openai/openai-openapi>; we track it and contribute
@@ -11,48 +11,15 @@
 //! conversions that translate between the two via the gateway request live
 //! under `crate::gateway`.
 //!
-//! Providers that speak this dialect but diverge in places — a response field
+//! Providers that speak this protocol but diverge in places — a response field
 //! carrying meaning OpenAI has no name for, a parameter spelled differently —
 //! do NOT get shapes of their own. The divergence is handled in the
-//! conversions under `crate::gateway`; the shapes here stay the dialect's.
+//! conversions under `crate::gateway`; the shapes here stay the protocol's.
 //!
-//! The error envelope below is protocol-wide, shared by every endpoint.
+//! SHAPES AND TRANSPORT ONLY. Turning a provider's error body into warpllm's
+//! canonical failure form is an ingest conversion, and it lives with every
+//! other one at `crate::gateway::openai_compat::error` — the same rule that
+//! keeps `transport` handing a non-2xx back as data rather than deciding what
+//! it means.
 
 pub mod chat_completions;
-
-use serde_json::Value;
-
-use crate::error::Error;
-
-/// OpenAI-compatible error bodies look like
-/// `{"error": {"message": ..., "type": ...}}`. Unparseable bodies fall back
-/// to the raw text.
-pub(crate) fn error_from_body(provider: &'static str, status: u16, body: &str) -> Error {
-    let parsed: Option<Value> = serde_json::from_str(body).ok();
-    let error = parsed.as_ref().map(|v| &v["error"]);
-    Error::Provider {
-        provider,
-        status,
-        error_type: error.and_then(|e| e["type"].as_str()).map(str::to_string),
-        message: error
-            .and_then(|e| e["message"].as_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| body.to_string()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unparseable_error_body_is_preserved() {
-        let body = "x".repeat(1_024);
-        let err = error_from_body("openai", 503, &body);
-
-        match err {
-            Error::Provider { message, .. } => assert_eq!(message, body),
-            other => panic!("expected Provider error, got {other:?}"),
-        }
-    }
-}

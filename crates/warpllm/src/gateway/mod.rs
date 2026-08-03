@@ -22,5 +22,6 @@
 //! the wire shapes instead would make `protocol` depend on the gateway and
 //! leave a per-provider adapter nowhere clean to sit.
 
+pub(crate) mod error;
 pub(crate) mod openai_compat;
 pub(crate) mod types;
