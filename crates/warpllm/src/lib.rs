@@ -18,7 +18,23 @@ pub use error::{Error, Origin, Result};
 /// provider-driven [`Error`] variant carries. `gateway` itself stays private,
 /// exactly as `registry` does; this is its only public shape.
 pub use gateway::types::ProviderError;
-pub use protocol::openai_compat::chat_completions::types::*;
+/// Everything a caller must NAME to make a call and hold its result: the
+/// request, the message it is built from, and the response handed back by
+/// [`Client::chat_completion`].
+///
+/// That is the whole rule, and it is why the response's insides are absent.
+/// Reading `completion.choices[0].message.content` names none of them — field
+/// access needs no import — so `Choice`, `CompletionUsage` and the tool-call
+/// forms stay at `protocol::openai_compat::chat_completions::types`, where the
+/// path states what they are: shapes of the OpenAI protocol, which warpllm
+/// speaks, rather than warpllm's own vocabulary. Requests are the asymmetric
+/// half — you cannot build one without spelling its message type.
+///
+/// A glob here claimed all of it as warpllm's, and widened the public API
+/// every time that module gained a type.
+pub use protocol::openai_compat::chat_completions::types::{
+    ChatCompletionRequestMessage, CreateChatCompletionRequest, CreateChatCompletionResponse,
+};
 /// The registry's public face: a provider, a model, and the lookup that hands
 /// back one of each. `registry` itself stays private — the roster, the schema,
 /// and the loading are not API.
