@@ -58,6 +58,16 @@ pub enum Error {
     },
     #[error("not implemented: {0}")]
     NotImplemented(&'static str),
+    /// warpllm could not set itself up — building the HTTP client failed, for
+    /// instance, which happens when the platform's TLS backend will not
+    /// initialize.
+    ///
+    /// Nothing the caller passed is wrong, so this is deliberately NOT
+    /// [`InvalidInput`](Self::InvalidInput): that spelling would tell someone
+    /// to go fix a payload that was fine, and the server would answer 400 for
+    /// what is squarely a 500.
+    #[error("internal error: {0}")]
+    Internal(String),
 
     // ----------------------------------------- the provider's own failures
     //
@@ -173,7 +183,8 @@ impl Error {
             // upstream reported.
             | Error::Network { .. }
             | Error::Decode { .. }
-            | Error::NotImplemented(_) => Origin::Gateway,
+            | Error::NotImplemented(_)
+            | Error::Internal(_) => Origin::Gateway,
             Error::RateLimited(_)
             | Error::QuotaExceeded(_)
             | Error::Overloaded(_)
@@ -226,6 +237,7 @@ impl Error {
             Error::Network { .. } => "connection_error",
             Error::Decode { .. } => "decode_error",
             Error::NotImplemented(_) => "not_implemented",
+            Error::Internal(_) => "internal_error",
             Error::RateLimited(_) => "rate_limited",
             Error::QuotaExceeded(_) => "quota_exceeded",
             Error::Overloaded(_) => "overloaded",
@@ -363,6 +375,7 @@ mod tests {
                 message: "x".into(),
             },
             Error::NotImplemented("x"),
+            Error::Internal("x".into()),
             rate_limit(),
             Error::QuotaExceeded(Box::new(provider_error())),
             Error::Overloaded(Box::new(provider_error())),
@@ -416,6 +429,7 @@ mod tests {
             }
             .code(),
             Error::NotImplemented("x").code(),
+            Error::Internal("x".into()).code(),
             Error::RateLimited(Box::new(provider_error())).code(),
             Error::QuotaExceeded(Box::new(provider_error())).code(),
             Error::Overloaded(Box::new(provider_error())).code(),
@@ -471,6 +485,18 @@ mod tests {
         assert_eq!(error.origin(), Origin::Gateway);
         assert!(error.provider_error().is_none());
         assert_eq!(wire(&error)["provider"], "openai");
+    }
+
+    /// A setup failure is warpllm's, not the caller's. Spelled out because
+    /// the tempting variant is `InvalidInput` — which reads as "your request
+    /// was wrong" and lands a 500-class failure on a 400.
+    #[test]
+    fn a_setup_failure_blames_the_gateway_and_not_the_caller() {
+        let error = Error::Internal("tls backend unavailable".into());
+        assert_eq!(error.origin(), Origin::Gateway);
+        assert!(error.provider_error().is_none());
+        assert_ne!(error.code(), Error::InvalidInput("x".into()).code());
+        assert_eq!(wire(&error)["code"], "internal_error");
     }
 
     #[test]

@@ -26,7 +26,7 @@ impl Client {
                 config.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS),
             ))
             .build()
-            .map_err(|e| Error::InvalidInput(e.to_string()))?;
+            .map_err(|e| Error::Internal(e.to_string()))?;
         Ok(Self { http, config })
     }
 

@@ -47,6 +47,12 @@ pub(crate) type Classified = fn(Box<ProviderError>) -> Error;
 ///
 /// Every method defaults to `None`, so an implementor writes only the lookups
 /// it actually has.
+// `from_*` taking `&self` trips `clippy::wrong_self_convention`, which reads
+// the prefix as a constructor. These are lookups on a mapper — "what does this
+// mapper make of this code" — and the name states the SIGNAL each one reads,
+// which is what `classify`'s ordering is built around. Renaming to `by_*`
+// would lose that reading for a lint about constructors that do not exist here.
+#[allow(clippy::wrong_self_convention)]
 pub(crate) trait ErrorMapper: Sync {
     /// The provider's `code` — the failure naming itself. Strongest.
     fn from_code(&self, _code: &str) -> Option<Classified> {
