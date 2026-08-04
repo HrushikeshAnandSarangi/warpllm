@@ -1,6 +1,9 @@
 # Rust
 target/
 
+# Local environment (copy of .env.example, never committed)
+.env
+
 # Python
 __pycache__/
 *.pyc
