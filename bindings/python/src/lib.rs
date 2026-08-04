@@ -16,15 +16,6 @@ fn version() -> &'static str {
     warpllm::version()
 }
 
-#[pyfunction]
-fn echo(py: Python<'_>, msg: String) -> PyResult<Bound<'_, PyAny>> {
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        warpllm::echo(&msg)
-            .await
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
-    })
-}
-
 async fn run_chat(client: Arc<warpllm::Client>, request_json: String) -> Result<String, String> {
     let request: warpllm::CreateChatCompletionRequest = serde_json::from_str(&request_json)
         .map_err(|e| warpllm::Error::InvalidInput(e.to_string()).to_wire_json())?;
@@ -133,7 +124,6 @@ impl Client {
 #[pymodule]
 fn _warpllm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
-    m.add_function(wrap_pyfunction!(echo, m)?)?;
     m.add_function(wrap_pyfunction!(serve, m)?)?;
     m.add_class::<Client>()?;
     m.add(

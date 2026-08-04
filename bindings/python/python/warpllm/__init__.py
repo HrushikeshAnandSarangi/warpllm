@@ -1,4 +1,4 @@
-from warpllm._warpllm import echo, version
+from warpllm._warpllm import version
 
 from ._client import AsyncWarpLLM, WarpLLM
 from ._exceptions import (
@@ -72,6 +72,5 @@ __all__ = [
     "WarpLLM",
     "WarpLLMError",
     "__version__",
-    "echo",
     "version",
 ]

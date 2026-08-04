@@ -7,13 +7,6 @@ pub fn version() -> &'static str {
     warpllm::version()
 }
 
-#[napi]
-pub async fn echo(msg: String) -> napi::Result<String> {
-    warpllm::echo(&msg)
-        .await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
-}
-
 /// Errors cross to JS as `Error` whose message is the wire-format JSON;
 /// the TypeScript wrapper parses it into typed error classes.
 fn wire_err(e: warpllm::Error) -> napi::Error {

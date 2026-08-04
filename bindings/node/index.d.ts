@@ -5,8 +5,6 @@ export declare class Client {
   chatCompletion(requestJson: string): Promise<string>
 }
 
-export declare function echo(msg: string): Promise<string>
-
 /**
  * Runs the OpenAI-compatible gateway. `args` are CLI flags passed verbatim
  * to the shared Rust parser (`--host`, `--port`, `--timeout-secs`; see
