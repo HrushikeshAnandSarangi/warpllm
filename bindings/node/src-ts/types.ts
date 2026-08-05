@@ -4,21 +4,46 @@ export interface WarpLLMOptions {
   timeout?: number
 }
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant'
+// ---------------------------------------------------------------------------
+// Request — field-for-field with Rust's `CreateChatCompletionRequest`, which
+// is what crosses the FFI. Names are Rust's (`max_tokens`, not `maxTokens`):
+// the wrapper forwards the object verbatim, so a rename here would be a
+// mapping table to keep in sync for no gain.
+// ---------------------------------------------------------------------------
+
+export interface ChatCompletionRequestMessage {
+  /**
+   * `"system"`, `"user"`, or `"assistant"` — but deliberately not a union.
+   * The gateway forwards roles it does not model (`"tool"`, `"developer"`),
+   * so narrowing here would reject calls the provider accepts.
+   */
+  role: string
   content: string
+  [key: string]: unknown
 }
 
-export interface ChatCompletionCreateParams {
+/**
+ * The OpenAI chat-completions parameters.
+ *
+ * Named fields are the ones warpllm reads; everything else — `tools`,
+ * `response_format`, `seed`, whatever OpenAI adds next — is forwarded to the
+ * provider untouched, which is why the index signature is here rather than a
+ * closed list that would reject a call the provider accepts.
+ *
+ * The cost is that a misspelled optional parameter is not caught here; it
+ * reaches the provider, which rejects it by name.
+ */
+export interface CreateChatCompletionRequest {
   /** `provider/model`, e.g. `"openai/gpt-5.6"`. */
   model: string
-  messages: ChatMessage[]
+  messages: ChatCompletionRequestMessage[]
   temperature?: number
-  maxTokens?: number
-  topP?: number
+  max_tokens?: number
+  top_p?: number
   stop?: string[]
   /** Not yet implemented; `true` rejects with code `not_implemented`. */
   stream?: boolean
+  [key: string]: unknown
 }
 
 // ---------------------------------------------------------------------------
@@ -27,7 +52,7 @@ export interface ChatCompletionCreateParams {
 // https://developers.openai.com/api/reference/resources/chat
 // ---------------------------------------------------------------------------
 
-export interface ChatCompletion {
+export interface CreateChatCompletionResponse {
   id: string
   choices: Choice[]
   created: number

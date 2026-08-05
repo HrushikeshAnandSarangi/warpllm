@@ -8,9 +8,9 @@ use crate::gateway::types::ProviderError;
 /// needs unwrapping before it can be read — it is an error, and it sits
 /// beside warpllm's own. That means one `match` reaches every case
 /// (`Error::RateLimited(e)`), rather than a match on `Error` followed by a
-/// second match on a nested kind, and it means the Rust surface and the two
-/// binding surfaces agree: Python and Node already raise one exception class
-/// per failure, so a nested enum was a shape only Rust callers ever saw.
+/// second match on a nested kind. This enum is Rust's alone — the bindings
+/// raise one class carrying OpenAI's error object — so a nested kind would
+/// have been a shape only Rust callers ever saw.
 ///
 /// The trade the flattening makes is that WHO failed is no longer visible in
 /// the type — so [`Error::origin`] states it explicitly, and
@@ -36,9 +36,10 @@ pub enum Error {
         /// `None` means the entry declares no `env_api_key`, and since the
         /// environment is the only key source, such an entry cannot be
         /// authenticated at all — the remedy is a roster edit, not a shell one.
-        /// The wire form keeps one `missing_api_key` code either way — the
-        /// failure is the same, only the remedy differs — and carries
-        /// `env_var: null` for that case.
+        /// One `missing_api_key` code covers both: the failure is the same,
+        /// only the remedy differs, and the remedy rides in the message —
+        /// which is the only place it can, since the OpenAI envelope the
+        /// bindings receive has no field to put a variable name in.
         env_var: Option<&'static str>,
     },
     /// The provider was never reached, so it never had a chance to answer.
@@ -143,8 +144,9 @@ pub enum Origin {
 }
 
 impl Origin {
-    /// The wire spelling; a stable public contract, and the one place it is
-    /// written so the FFI form and the server envelope cannot drift apart.
+    /// The wire spelling, written once so every surface that reports an
+    /// origin agrees. Today that is the gateway's HTTP envelope; the FFI
+    /// form deliberately omits it, origin being warpllm's own vocabulary.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Gateway => "gateway",
@@ -252,38 +254,71 @@ impl Error {
         }
     }
 
-    /// Stable machine-readable form for the FFI boundary: `code`, `origin`,
-    /// and whatever the variant carries, so language wrappers can raise
-    /// typed exceptions without parsing display strings.
-    pub fn to_wire_json(&self) -> String {
-        let mut value = json!({
-            "code": self.code(),
-            "origin": self.origin().as_str(),
-            "message": self.to_string(),
-        });
-        match self {
-            Error::MissingApiKey { provider, env_var } => {
-                value["provider"] = json!(provider);
-                value["env_var"] = json!(env_var);
+    /// The HTTP status and OpenAI `type` an OpenAI-compatible surface answers
+    /// with, so the in-process FFI form and the gateway's HTTP response
+    /// cannot drift apart.
+    ///
+    /// A provider-driven failure is answered with the upstream's own status
+    /// and family, so a genuinely unknown model surfaces as the provider's
+    /// 404 rather than as a warpllm opinion about it. Matched first: [`Error`]
+    /// is `non_exhaustive`, so a new provider variant must land here without
+    /// a change over here.
+    pub fn openai_status_and_type(&self) -> (u16, &str) {
+        match (self.provider_error(), self) {
+            (Some(upstream), _) => (
+                upstream.status,
+                upstream.error_type.as_deref().unwrap_or("api_error"),
+            ),
+            (None, Error::InvalidInput(_) | Error::InvalidModel { .. }) => {
+                (400, "invalid_request_error")
             }
-            Error::Network { provider, .. } | Error::Decode { provider, .. } => {
-                value["provider"] = json!(provider);
-            }
-            _ => {}
+            (None, Error::MissingApiKey { .. }) => (401, "invalid_request_error"),
+            (None, Error::Network { .. } | Error::Decode { .. }) => (502, "api_error"),
+            (None, Error::NotImplemented(_)) => (501, "api_error"),
+            // Unreachable today; a new gateway-side variant lands here rather
+            // than failing to compile a caller that must keep serving.
+            (None, _) => (500, "api_error"),
         }
-        // Everything the provider said, spelled the same on every provider
-        // variant. No field here tells a caller what to DO — that is their
-        // policy, not warpllm's.
-        if let Some(e) = self.provider_error() {
-            value["provider"] = json!(e.provider);
-            value["status"] = json!(e.status);
-            value["retry_after_seconds"] = json!(e.retry_after.map(|d| d.as_secs()));
-            value["error_type"] = json!(e.error_type);
-            value["provider_code"] = json!(e.provider_code);
-            value["request_id"] = json!(e.request_id);
-            value["provider_raw"] = json!(e.raw_body);
-        }
-        value.to_string()
+    }
+
+    /// The OpenAI error envelope, for the FFI boundary.
+    ///
+    /// Shaped like what the official SDKs build an error from: the `error`
+    /// object exactly as OpenAI spells it, beside the two things an SDK would
+    /// otherwise read off the HTTP response — which is the rule for what
+    /// belongs here at all. `status` and `request_id` are on `APIError`;
+    /// `retry_after` is not, so it is not here either.
+    ///
+    /// NOTHING here is warpllm's own vocabulary. The bindings are a surface
+    /// callers program against directly, so a field named here is a field
+    /// warpllm owes compatibility on — and the taxonomy is not settled enough
+    /// to promise. [`code`](Self::code) and [`origin`](Self::origin) stay
+    /// Rust-side, where changing them costs a recompile rather than a major
+    /// version.
+    ///
+    /// `code` carries the PROVIDER's own slug when there is one, so a quota
+    /// exhaustion stays `insufficient_quota` and cannot be mistaken for a
+    /// plain rate limit — the distinction survives in OpenAI's vocabulary
+    /// rather than needing warpllm's. Absent an upstream there is no
+    /// provider slug to carry, so warpllm's own stands in; `code` is
+    /// free-form in OpenAI's schema, and naming the failure is what it is for.
+    pub fn to_openai_json(&self) -> String {
+        let (status, error_type) = self.openai_status_and_type();
+        let upstream = self.provider_error();
+        json!({
+            "status": status,
+            "request_id": upstream.and_then(|e| e.request_id.as_deref()),
+            "error": {
+                "message": self.to_string(),
+                "type": error_type,
+                // warpllm does not model which parameter was at fault.
+                "param": serde_json::Value::Null,
+                "code": upstream
+                    .and_then(|e| e.provider_code.as_deref())
+                    .unwrap_or(self.code()),
+            },
+        })
+        .to_string()
     }
 }
 
@@ -296,7 +331,7 @@ mod tests {
     use super::*;
 
     fn wire(err: &Error) -> serde_json::Value {
-        serde_json::from_str(&err.to_wire_json()).unwrap()
+        serde_json::from_str(&err.to_openai_json()).unwrap()
     }
 
     fn rate_limit() -> Error {
@@ -313,23 +348,45 @@ mod tests {
     }
 
     #[test]
-    fn provider_error_wire_format() {
+    fn a_provider_failure_renders_as_an_openai_error() {
         let v = wire(&rate_limit());
-        assert_eq!(v["code"], "rate_limited");
-        assert_eq!(v["origin"], "provider");
-        assert_eq!(v["provider"], "openai");
         assert_eq!(v["status"], 429);
-        assert_eq!(v["retry_after_seconds"], 30);
-        // ...and every scrap of what the provider actually said.
-        assert_eq!(v["error_type"], "rate_limit_error");
-        assert_eq!(v["provider_code"], "rate_limit_exceeded");
         assert_eq!(v["request_id"], "req-1");
-        assert!(v["provider_raw"].as_str().unwrap().contains("slow down"));
-        assert!(v["message"].as_str().unwrap().contains("HTTP 429"));
+        assert_eq!(v["error"]["type"], "rate_limit_error");
+        assert!(v["error"]["param"].is_null());
+        assert!(v["error"]["message"].as_str().unwrap().contains("HTTP 429"));
+        // The PROVIDER's slug, not warpllm's `rate_limited`.
+        assert_eq!(v["error"]["code"], "rate_limit_exceeded");
     }
 
-    /// An unclassifiable failure still produces a well-formed envelope —
-    /// `code` and `origin` are always present, never absent or null.
+    /// The reason `code` carries the provider's slug rather than warpllm's.
+    ///
+    /// A quota exhaustion and a rate limit are both 429s and read alike, but
+    /// no amount of backing off buys credit. OpenAI already spells the
+    /// difference — `insufficient_quota` — so the distinction survives a
+    /// pure-OpenAI envelope without warpllm's taxonomy crossing the boundary
+    /// to carry it.
+    #[test]
+    fn quota_exhaustion_stays_distinguishable_from_a_rate_limit() {
+        let quota = Error::QuotaExceeded(Box::new(ProviderError {
+            provider: "openai",
+            status: 429,
+            message: "quota".into(),
+            error_type: Some("insufficient_quota".into()),
+            provider_code: Some("insufficient_quota".into()),
+            retry_after: None,
+            request_id: None,
+            raw_body: String::new(),
+        }));
+        let (quota, limit) = (wire(&quota), wire(&rate_limit()));
+
+        assert_eq!(quota["status"], limit["status"], "both are 429s");
+        assert_ne!(quota["error"]["code"], limit["error"]["code"]);
+        assert_eq!(quota["error"]["code"], "insufficient_quota");
+    }
+
+    /// An unclassifiable failure still produces a well-formed envelope:
+    /// `status`, `type` and `code` are always present, never absent or null.
     #[test]
     fn an_unknown_provider_failure_still_serializes() {
         let v = wire(&Error::Unknown(Box::new(ProviderError {
@@ -342,14 +399,54 @@ mod tests {
             request_id: None,
             raw_body: "Insufficient Balance".into(),
         })));
-        assert_eq!(v["code"], "provider_unknown");
-        assert_eq!(v["origin"], "provider");
-        assert!(v["error_type"].is_null());
-        assert!(v["provider_code"].is_null());
-        assert!(v["retry_after_seconds"].is_null());
-        // The body is the ONLY evidence left when nothing classified, so
-        // it has to survive.
-        assert_eq!(v["provider_raw"], "Insufficient Balance");
+        assert_eq!(v["status"], 402);
+        assert_eq!(v["error"]["type"], "api_error");
+        // Nothing upstream named it, so warpllm's slug stands in.
+        assert_eq!(v["error"]["code"], "provider_unknown");
+        assert!(v["request_id"].is_null());
+    }
+
+    /// The envelope is OpenAI's and only OpenAI's. warpllm's taxonomy is
+    /// reachable in Rust and deliberately absent from the wire, so shipping
+    /// a binding does not promise compatibility on a name still in flux.
+    #[test]
+    fn warpllms_own_vocabulary_never_crosses_the_boundary() {
+        for error in [rate_limit(), Error::NotImplemented("streaming")] {
+            let v = wire(&error);
+            let envelope = v["error"].as_object().unwrap();
+            let mut keys: Vec<_> = envelope.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            assert_eq!(keys, ["code", "message", "param", "type"], "{v}");
+            for warpllm_only in ["origin", "provider", "provider_code", "provider_raw"] {
+                assert!(v.get(warpllm_only).is_none(), "{warpllm_only} in {v}");
+            }
+        }
+    }
+
+    /// A gateway-side failure has no upstream to borrow a status from, so
+    /// the mapping has to supply one an OpenAI client can act on.
+    #[test]
+    fn gateway_failures_map_onto_openai_statuses() {
+        let cases = [
+            (
+                Error::InvalidInput("x".into()),
+                400,
+                "invalid_request_error",
+            ),
+            (
+                Error::MissingApiKey {
+                    provider: "openai",
+                    env_var: Some("OPENAI_API_KEY"),
+                },
+                401,
+                "invalid_request_error",
+            ),
+            (Error::NotImplemented("streaming"), 501, "api_error"),
+            (Error::Internal("tls".into()), 500, "api_error"),
+        ];
+        for (error, status, error_type) in cases {
+            assert_eq!(error.openai_status_and_type(), (status, error_type));
+        }
     }
 
     /// The whole point of the flat enum: a caller matches one level.
@@ -463,19 +560,27 @@ mod tests {
         assert_ne!(quota.code(), rate_limit().code());
     }
 
+    /// The variable to set is the whole remedy, and the envelope has no
+    /// field for it — so it has to survive in the message instead.
     #[test]
     fn missing_key_wire_format() {
         let v = wire(&Error::MissingApiKey {
             provider: "openai",
             env_var: Some("OPENAI_API_KEY"),
         });
-        assert_eq!(v["code"], "missing_api_key");
-        assert_eq!(v["origin"], "gateway");
-        assert_eq!(v["env_var"], "OPENAI_API_KEY");
+        assert_eq!(v["status"], 401);
+        assert_eq!(v["error"]["code"], "missing_api_key");
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("OPENAI_API_KEY")
+        );
     }
 
     /// Network names a provider but is warpllm-side: the upstream was never
-    /// reached, so there is nothing it said to report.
+    /// reached, so there is nothing it said to report — no status of its
+    /// own, and no `request_id`.
     #[test]
     fn a_network_failure_is_a_gateway_failure() {
         let error = Error::Decode {
@@ -484,7 +589,10 @@ mod tests {
         };
         assert_eq!(error.origin(), Origin::Gateway);
         assert!(error.provider_error().is_none());
-        assert_eq!(wire(&error)["provider"], "openai");
+        let v = wire(&error);
+        assert_eq!(v["status"], 502);
+        assert_eq!(v["error"]["type"], "api_error");
+        assert!(v["request_id"].is_null());
     }
 
     /// A setup failure is warpllm's, not the caller's. Spelled out because
@@ -496,13 +604,21 @@ mod tests {
         assert_eq!(error.origin(), Origin::Gateway);
         assert!(error.provider_error().is_none());
         assert_ne!(error.code(), Error::InvalidInput("x".into()).code());
-        assert_eq!(wire(&error)["code"], "internal_error");
+        let v = wire(&error);
+        assert_eq!(v["error"]["code"], "internal_error");
+        assert_eq!(v["status"], 500, "a setup failure is not a 400");
     }
 
     #[test]
     fn not_implemented_wire_format() {
         let v = wire(&Error::NotImplemented("streaming"));
-        assert_eq!(v["code"], "not_implemented");
-        assert!(v["message"].as_str().unwrap().contains("streaming"));
+        assert_eq!(v["status"], 501);
+        assert_eq!(v["error"]["code"], "not_implemented");
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("streaming")
+        );
     }
 }

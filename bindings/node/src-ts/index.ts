@@ -1,32 +1,22 @@
-export { version, serve } from '../index.js'
+export { version } from '../index.js'
 export { WarpLLM } from './client.js'
-export {
-  APIConnectionError,
-  APIStatusError,
-  AuthenticationError,
-  InvalidRequestError,
-  NotImplementedError,
-  PermissionDeniedError,
-  QuotaExceededError,
-  RateLimitError,
-  WarpLLMError,
-} from './errors.js'
+export { WarpLLMError } from './errors.js'
 export type {
   Annotation,
   AnnotationURLCitation,
-  ChatCompletion,
   ChatCompletionAudio,
-  ChatCompletionCreateParams,
   ChatCompletionMessage,
   ChatCompletionMessageCustomToolCall,
   ChatCompletionMessageFunctionToolCall,
   ChatCompletionMessageToolCall,
+  ChatCompletionRequestMessage,
   ChatCompletionTokenLogprob,
-  ChatMessage,
   Choice,
   ChoiceLogprobs,
   CompletionTokensDetails,
   CompletionUsage,
+  CreateChatCompletionRequest,
+  CreateChatCompletionResponse,
   Error,
   FunctionCall,
   Moderation,

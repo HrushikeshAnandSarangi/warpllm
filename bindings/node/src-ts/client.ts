@@ -1,58 +1,45 @@
 import { Client as NativeClient } from '../index.js'
 
 import { throwFromWire } from './errors.js'
-import type { ChatCompletion, ChatCompletionCreateParams, WarpLLMOptions } from './types.js'
+import type {
+  CreateChatCompletionRequest,
+  CreateChatCompletionResponse,
+  WarpLLMOptions,
+} from './types.js'
 
-class Completions {
-  constructor(private readonly native: NativeClient) {}
+/**
+ * Model strings are `provider/model`, e.g. `"openai/gpt-5.6"`. API keys come
+ * from the environment (`OPENAI_API_KEY`); a provider's key is only required
+ * when a request targets that provider.
+ */
+export class WarpLLM {
+  private readonly native: NativeClient
 
-  async create(params: ChatCompletionCreateParams): Promise<ChatCompletion> {
-    const request = {
-      model: params.model,
-      messages: params.messages,
-      temperature: params.temperature,
-      max_tokens: params.maxTokens,
-      top_p: params.topP,
-      stop: params.stop,
-      stream: params.stream || undefined,
+  constructor(options: WarpLLMOptions = {}) {
+    try {
+      this.native = new NativeClient(
+        JSON.stringify({ base_url: options.baseUrl, timeout_secs: options.timeout }),
+      )
+    } catch (err) {
+      throwFromWire(err)
     }
+  }
+
+  /**
+   * One method, mirroring Rust's `client.chat_completion(request)`.
+   *
+   * The request crosses verbatim — its fields are Rust's, so nothing here
+   * renames them and nothing here has to learn a field warpllm gains.
+   */
+  async chatCompletion(
+    request: CreateChatCompletionRequest,
+  ): Promise<CreateChatCompletionResponse> {
     let raw: string
     try {
       raw = await this.native.chatCompletion(JSON.stringify(request))
     } catch (err) {
       throwFromWire(err)
     }
-    return JSON.parse(raw) as ChatCompletion
-  }
-}
-
-class Chat {
-  readonly completions: Completions
-
-  constructor(native: NativeClient) {
-    this.completions = new Completions(native)
-  }
-}
-
-/**
- * Model strings are `provider/model`, e.g. `"openai/gpt-5.6"`. API keys come
- * from the environment (OPENAI_API_KEY), exactly like the OpenAI SDK; a
- * provider's key is only required when a request targets that provider.
- */
-export class WarpLLM {
-  readonly chat: Chat
-
-  constructor(options: WarpLLMOptions = {}) {
-    const config = {
-      base_url: options.baseUrl,
-      timeout_secs: options.timeout,
-    }
-    let native: NativeClient
-    try {
-      native = new NativeClient(JSON.stringify(config))
-    } catch (err) {
-      throwFromWire(err)
-    }
-    this.chat = new Chat(native)
+    return JSON.parse(raw) as CreateChatCompletionResponse
   }
 }

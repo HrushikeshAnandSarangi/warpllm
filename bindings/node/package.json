@@ -10,12 +10,8 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": {
-    "warpllm": "cli.js"
-  },
   "files": [
     "dist",
-    "cli.js",
     "index.js",
     "index.d.ts"
   ],
@@ -52,7 +48,6 @@
   "devDependencies": {
     "@napi-rs/cli": "^3.7",
     "@types/node": "25.9.4",
-    "openai": "6.45.0",
     "typescript": "^5",
     "vitest": "^3"
   }

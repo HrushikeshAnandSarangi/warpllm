@@ -1,7 +1,13 @@
 //! Maps [`warpllm::Error`] onto HTTP statuses and the OpenAI error envelope
 //! (`{"error": {"message", "type", "code"}}`) so official SDKs raise their
-//! proper typed exceptions. `code` values reuse the stable
-//! [`warpllm::Error::to_wire_json`] contract.
+//! proper typed exceptions.
+//!
+//! The status and `type` come from [`warpllm::Error::openai_status_and_type`],
+//! shared with the FFI envelope so the two OpenAI-compatible surfaces cannot
+//! disagree about what a failure is. What this adds on top — `code` as
+//! warpllm's slug, `origin`, and the provider's evidence — is deliberate and
+//! does NOT hold for the bindings: an HTTP caller can ignore a field it does
+//! not know, while a field on an SDK error object is a promise to keep.
 
 use axum::http::header::RETRY_AFTER;
 use axum::http::{HeaderValue, StatusCode};
@@ -9,35 +15,18 @@ use axum::response::{IntoResponse, Json, Response};
 use serde_json::{Value, json};
 
 pub fn openai_error_body(error: &warpllm::Error) -> (StatusCode, Value) {
-    use warpllm::Error;
-    // A provider-driven failure is answered with the upstream's own status
-    // and family, so a genuinely unknown model surfaces here as the
-    // provider's 404 rather than as a warpllm opinion about it. Matched
-    // first: `warpllm::Error` is `non_exhaustive`, so a new provider
-    // variant must land here without a code change over here.
-    let (status, error_type) = match (error.provider_error(), error) {
-        (Some(upstream), _) => (
-            StatusCode::from_u16(upstream.status).unwrap_or(StatusCode::BAD_GATEWAY),
-            upstream.error_type.as_deref().unwrap_or("api_error"),
-        ),
-        (None, Error::InvalidInput(_) | Error::InvalidModel { .. }) => {
-            (StatusCode::BAD_REQUEST, "invalid_request_error")
-        }
-        (None, Error::MissingApiKey { .. }) => (StatusCode::UNAUTHORIZED, "invalid_request_error"),
-        (None, Error::Network { .. } | Error::Decode { .. }) => {
-            (StatusCode::BAD_GATEWAY, "api_error")
-        }
-        (None, Error::NotImplemented(_)) => (StatusCode::NOT_IMPLEMENTED, "api_error"),
-        // Unreachable today; a new gateway-side variant lands here rather
-        // than failing to compile a binary that must keep serving.
-        (None, _) => (StatusCode::INTERNAL_SERVER_ERROR, "api_error"),
-    };
+    let (status, error_type) = error.openai_status_and_type();
+    // A provider can name a status no HTTP client could send; answering with
+    // it verbatim would make this response unparseable, so it degrades to a
+    // plain upstream failure.
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut envelope = json!({
         "message": error.to_string(),
         "type": error_type,
         // `type` keeps its OpenAI meaning so official SDKs raise the
         // exceptions they already raise; `code` and `origin` are warpllm's
-        // flat taxonomy, spelled exactly as on the FFI wire form.
+        // flat taxonomy, additive fields an HTTP caller can ignore. The FFI
+        // envelope carries neither — see this module's header.
         "code": error.code(),
         "origin": error.origin().as_str(),
     });

@@ -14,12 +14,8 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 
-[project.scripts]
-warpllm = "warpllm._cli:main"
-
 [dependency-groups]
 dev = [
-    "openai>=1.60",
     "pytest>=8",
     "pytest-asyncio>=0.25",
     "pytest-httpserver>=1.1",

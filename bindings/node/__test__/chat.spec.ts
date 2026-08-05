@@ -1,17 +1,15 @@
 import { afterEach, beforeEach, expect, test } from 'vitest'
 
-import {
-  APIStatusError,
-  AuthenticationError,
-  InvalidRequestError,
-  NotImplementedError,
-  QuotaExceededError,
-  RateLimitError,
-  WarpLLM,
-} from '../dist/index.js'
+import { WarpLLM, WarpLLMError } from '../dist/index.js'
 import { MockServer } from './mock-server.js'
 
-const MESSAGES = [{ role: 'user' as const, content: 'hi' }]
+const MESSAGES = [{ role: 'user', content: 'hi' }]
+
+const request = (model = 'openai/gpt-5.6', extra: Record<string, unknown> = {}) => ({
+  model,
+  messages: MESSAGES,
+  ...extra,
+})
 
 const OPENAI_COMPLETION = {
   id: 'chatcmpl-123',
@@ -55,13 +53,17 @@ afterEach(async () => {
   await server.close()
 })
 
+/** Every failure is one class now, so every assertion reads `code`. */
+const failure = async (req: Parameters<WarpLLM['chatCompletion']>[0]) => {
+  const err = await client.chatCompletion(req).catch((e: unknown) => e)
+  expect(err).toBeInstanceOf(WarpLLMError)
+  return err as WarpLLMError
+}
+
 test('openai happy path', async () => {
   server.respondWith(200, OPENAI_COMPLETION)
 
-  const completion = await client.chat.completions.create({
-    model: 'openai/gpt-5.6',
-    messages: MESSAGES,
-  })
+  const completion = await client.chatCompletion(request())
 
   expect(completion.choices[0].message.content).toBe('Hello there!')
   expect(completion.choices[0].finish_reason).toBe('stop')
@@ -80,29 +82,43 @@ test('openai happy path', async () => {
   expect((sent.body as { model: string }).model).toBe('gpt-5.6')
 })
 
-test('401 rejects with AuthenticationError', async () => {
+// The request is forwarded verbatim rather than rebuilt field by field, so a
+// parameter the wrapper does not model still reaches the provider. The old
+// wrapper copied a fixed list of keys and silently dropped the rest.
+test('a request field the wrapper does not model still goes upstream', async () => {
+  server.respondWith(200, OPENAI_COMPLETION)
+
+  // No cast: an unmodelled OpenAI parameter has to type-check, or the
+  // wrapper does not accept an OpenAI-compatible request.
+  await client.chatCompletion({ ...request(), max_tokens: 64, seed: 7 })
+
+  expect(server.requests[0].body).toMatchObject({ max_tokens: 64, seed: 7 })
+})
+
+test('401 reports authentication', async () => {
   server.respondWith(401, {
-    error: { message: 'Incorrect API key provided', type: 'invalid_request_error' },
+    error: {
+      message: 'Incorrect API key provided',
+      type: 'invalid_request_error',
+      code: 'invalid_api_key',
+    },
   })
 
-  const err = await client.chat.completions
-    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
-    .catch((e: unknown) => e)
+  const err = await failure(request())
 
-  expect(err).toBeInstanceOf(AuthenticationError)
-  expect((err as AuthenticationError).status).toBe(401)
-  expect((err as AuthenticationError).provider).toBe('openai')
-  expect((err as AuthenticationError).message).toContain('Incorrect API key')
-  // The normalized taxonomy, and the provider's own spelling beside it.
-  expect((err as AuthenticationError).code).toBe('authentication')
-  expect((err as AuthenticationError).errorType).toBe('invalid_request_error')
+  expect(err.status).toBe(401)
+  expect(err.message).toContain('Incorrect API key')
+  // The provider's own slug reaches the caller, not warpllm's spelling of
+  // it — warpllm would have called this one `authentication`.
+  expect(err.code).toBe('invalid_api_key')
+  expect(err.type).toBe('invalid_request_error')
 })
 
 // A quota exhaustion arrives as a 429 and reads exactly like a rate limit,
-// but no amount of backing off buys credit. `instanceof RateLimitError` must
-// NOT match it — that is how a billing failure becomes an infinite retry
-// loop.
-test('quota exhaustion does not reject with RateLimitError', async () => {
+// but no amount of backing off buys credit. A retry loop keyed on
+// `code === 'rate_limited'` must not fire here — that is how a billing
+// failure becomes an infinite retry loop.
+test('quota exhaustion is not reported as a rate limit', async () => {
   server.respondWith(429, {
     error: {
       message: 'You exceeded your current quota',
@@ -111,34 +127,25 @@ test('quota exhaustion does not reject with RateLimitError', async () => {
     },
   })
 
-  const err = (await client.chat.completions
-    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
-    .catch((e: unknown) => e)) as QuotaExceededError
+  const err = await failure(request())
 
-  expect(err).toBeInstanceOf(QuotaExceededError)
-  expect(err).not.toBeInstanceOf(RateLimitError)
+  expect(err.code).toBe('insufficient_quota')
+  expect(err.code).not.toBe('rate_limit_exceeded')
   expect(err.status).toBe(429)
-  expect(err.code).toBe('quota_exceeded')
-  // The evidence the classification was read from survives.
-  expect(err.providerCode).toBe('insufficient_quota')
 })
 
-test('a rate limit carries the provider’s retry-after and request id', async () => {
+test('a rate limit carries the provider’s request id', async () => {
   server.respondWith(
     429,
     { error: { message: 'Rate limit reached', type: 'rate_limit_error' } },
     { 'retry-after': '30', 'x-request-id': 'req-abc' },
   )
 
-  const err = (await client.chat.completions
-    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
-    .catch((e: unknown) => e)) as RateLimitError
+  const err = await failure(request())
 
-  expect(err).toBeInstanceOf(RateLimitError)
-  expect(err.code).toBe('rate_limited')
-  // Both live only in headers, so they prove the transport kept them.
-  expect(err.retryAfterSeconds).toBe(30)
-  expect(err.requestId).toBe('req-abc')
+  expect(err.type).toBe('rate_limit_error')
+  // Lives only in a header, so it proves the transport kept it.
+  expect(err.requestID).toBe('req-abc')
 })
 
 // A context overflow must not read as a plain bad request: the remedy is a
@@ -152,59 +159,40 @@ test('context overflow is classified', async () => {
     },
   })
 
-  const err = await client.chat.completions
-    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
-    .catch((e: unknown) => e)
-
-  expect(err).toBeInstanceOf(APIStatusError)
-  expect((err as APIStatusError).code).toBe('context_length_exceeded')
+  expect((await failure(request())).code).toBe('context_length_exceeded')
 })
 
 // The two halves of one flat code space. A provider rejecting the request
 // and warpllm rejecting it read almost alike, and the remedy is not the
 // same — one edits the payload, the other may just need a different model.
-test('origin separates the provider’s failures from warpllm’s', async () => {
+test('code separates the provider’s rejection from warpllm’s', async () => {
   server.respondWith(400, {
     error: { message: 'bad payload', type: 'invalid_request_error' },
   })
 
-  const upstream = (await client.chat.completions
-    .create({ model: 'openai/gpt-5.6', messages: MESSAGES })
-    .catch((e: unknown) => e)) as APIStatusError
-  expect(upstream.origin).toBe('provider')
-  expect(upstream.code).toBe('provider_invalid_request')
-
+  const upstream = await failure(request())
   // ...and warpllm's own rejection never left the process.
-  const local = (await client.chat.completions
-    .create({ model: 'mistral/large', messages: MESSAGES })
-    .catch((e: unknown) => e)) as InvalidRequestError
-  expect(local.origin).toBe('gateway')
+  const local = await failure(request('mistral/large'))
+
+  expect(upstream.type).toBe('invalid_request_error')
+  expect(local.type).toBe('invalid_request_error')
+  expect(upstream.code).toBe('provider_invalid_request')
   expect(local.code).toBe('invalid_request')
 })
 
 test('invalid model rejects unsupported provider', async () => {
-  const err = await client.chat.completions
-    .create({ model: 'mistral/large', messages: MESSAGES })
-    .catch((e: unknown) => e)
-
-  expect(err).toBeInstanceOf(InvalidRequestError)
-  expect((err as InvalidRequestError).message).toContain('no registered model spec')
+  expect((await failure(request('mistral/large'))).message).toContain(
+    'no registered model spec',
+  )
 })
 
 test('bare model name is rejected', async () => {
-  const err = await client.chat.completions
-    .create({ model: 'gpt-5.6', messages: MESSAGES })
-    .catch((e: unknown) => e)
-
-  expect(err).toBeInstanceOf(InvalidRequestError)
-  expect((err as InvalidRequestError).message).toContain('no registered model spec')
+  expect((await failure(request('gpt-5.6'))).message).toContain('no registered model spec')
 })
 
-test('stream: true rejects as not implemented', async () => {
-  const err = await client.chat.completions
-    .create({ model: 'openai/gpt-5.6', messages: MESSAGES, stream: true })
-    .catch((e: unknown) => e)
+test('stream: true reports not implemented', async () => {
+  const err = await failure(request('openai/gpt-5.6', { stream: true }))
 
-  expect(err).toBeInstanceOf(NotImplementedError)
+  expect(err.code).toBe('not_implemented')
   expect(server.requests).toHaveLength(0)
 })

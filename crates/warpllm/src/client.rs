@@ -146,10 +146,18 @@ mod tests {
         );
         assert!(!message.contains("set the"), "{message}");
 
-        // The wire form keeps one code, with a null where the variable would be.
-        let wire: serde_json::Value = serde_json::from_str(&err.to_wire_json()).unwrap();
-        assert_eq!(wire["code"], "missing_api_key");
-        assert!(wire["env_var"].is_null());
+        // The wire form keeps one code either way. The remedy rides in the
+        // message rather than a warpllm-specific `env_var` field, which the
+        // OpenAI envelope has no place for.
+        let wire: serde_json::Value = serde_json::from_str(&err.to_openai_json()).unwrap();
+        assert_eq!(wire["status"], 401);
+        assert_eq!(wire["error"]["code"], "missing_api_key");
+        assert!(
+            wire["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("names no environment variable")
+        );
     }
 
     /// What ships upstream is the ENTRY's name, never the string the caller

@@ -7,116 +7,23 @@ from warpllm._warpllm import Client as _NativeClient
 from warpllm._warpllm import WarpLLMNativeError
 
 from ._exceptions import raise_from_wire
-from ._models import ChatCompletion
 
 
-def _build_config(
-    base_url: str | None,
-    timeout: int | None,
-) -> str:
-    config = {
-        "base_url": base_url,
-        "timeout_secs": timeout,
-    }
-    return json.dumps({k: v for k, v in config.items() if v is not None})
-
-
-def _build_request(
-    model: str,
-    messages: list[dict[str, str]],
-    temperature: float | None,
-    max_tokens: int | None,
-    top_p: float | None,
-    stop: list[str] | None,
-    stream: bool,
-) -> str:
-    request: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "top_p": top_p,
-        "stop": stop,
-        "stream": stream or None,
-    }
-    return json.dumps({k: v for k, v in request.items() if v is not None})
-
-
-def _native_client(
-    base_url: str | None,
-    timeout: int | None,
-) -> _NativeClient:
+def _native_client(base_url: str | None, timeout: int | None) -> _NativeClient:
+    config = {"base_url": base_url, "timeout_secs": timeout}
     try:
-        return _NativeClient(_build_config(base_url, timeout))
+        return _NativeClient(
+            json.dumps({k: v for k, v in config.items() if v is not None})
+        )
     except WarpLLMNativeError as e:
         raise_from_wire(str(e))
 
 
-class _Completions:
-    def __init__(self, native: _NativeClient) -> None:
-        self._native = native
-
-    def create(
-        self,
-        *,
-        model: str,
-        messages: list[dict[str, str]],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        top_p: float | None = None,
-        stop: list[str] | None = None,
-        stream: bool = False,
-    ) -> ChatCompletion:
-        request = _build_request(
-            model, messages, temperature, max_tokens, top_p, stop, stream
-        )
-        try:
-            raw = self._native.chat_completion(request)
-        except WarpLLMNativeError as e:
-            raise_from_wire(str(e))
-        return ChatCompletion.from_dict(json.loads(raw))
-
-
-class _AsyncCompletions:
-    def __init__(self, native: _NativeClient) -> None:
-        self._native = native
-
-    async def create(
-        self,
-        *,
-        model: str,
-        messages: list[dict[str, str]],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        top_p: float | None = None,
-        stop: list[str] | None = None,
-        stream: bool = False,
-    ) -> ChatCompletion:
-        request = _build_request(
-            model, messages, temperature, max_tokens, top_p, stop, stream
-        )
-        try:
-            raw = await self._native.async_chat_completion(request)
-        except WarpLLMNativeError as e:
-            raise_from_wire(str(e))
-        return ChatCompletion.from_dict(json.loads(raw))
-
-
-class _Chat:
-    def __init__(self, native: _NativeClient) -> None:
-        self.completions = _Completions(native)
-
-
-class _AsyncChat:
-    def __init__(self, native: _NativeClient) -> None:
-        self.completions = _AsyncCompletions(native)
-
-
 class WarpLLM:
     """Synchronous client. Model strings are `provider/model`, e.g.
-    `"openai/gpt-5.6"`. API keys come from the environment (`OPENAI_API_KEY`),
-    exactly like the OpenAI SDK; a provider's key is only required when a
-    request targets that provider.
+    `"openai/gpt-5.6"`. API keys come from the environment
+    (`OPENAI_API_KEY`); a provider's key is only required when a request
+    targets that provider.
     """
 
     def __init__(
@@ -125,11 +32,27 @@ class WarpLLM:
         base_url: str | None = None,
         timeout: int | None = None,
     ) -> None:
-        self.chat = _Chat(_native_client(base_url, timeout))
+        self._native = _native_client(base_url, timeout)
+
+    def chat_completion(self, request: dict[str, Any]) -> dict[str, Any]:
+        """One method, mirroring Rust's `client.chat_completion(request)`.
+
+        The request crosses verbatim -- its fields are Rust's, so nothing
+        here renames them and nothing here has to learn a field warpllm
+        gains. The response comes back as Rust serialized it: Rust has
+        already parsed and validated it, and re-hydrating it into Python
+        objects would re-do that work to hand back the same fields under the
+        same names.
+        """
+        try:
+            raw = self._native.chat_completion(json.dumps(request))
+        except WarpLLMNativeError as e:
+            raise_from_wire(str(e))
+        return json.loads(raw)
 
 
 class AsyncWarpLLM:
-    """Async client; `await client.chat.completions.create(...)`."""
+    """Async client; `await client.chat_completion(...)`."""
 
     def __init__(
         self,
@@ -137,4 +60,11 @@ class AsyncWarpLLM:
         base_url: str | None = None,
         timeout: int | None = None,
     ) -> None:
-        self.chat = _AsyncChat(_native_client(base_url, timeout))
+        self._native = _native_client(base_url, timeout)
+
+    async def chat_completion(self, request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.async_chat_completion(json.dumps(request))
+        except WarpLLMNativeError as e:
+            raise_from_wire(str(e))
+        return json.loads(raw)
