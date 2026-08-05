@@ -1,6 +1,5 @@
-use serde_json::json;
-
 use crate::gateway::types::ProviderError;
+use crate::protocol::openai_compat::error::OpenAiError;
 
 /// Every way a warpllm call can fail, in ONE flat enum.
 ///
@@ -254,71 +253,36 @@ impl Error {
         }
     }
 
-    /// The HTTP status and OpenAI `type` an OpenAI-compatible surface answers
-    /// with, so the in-process FFI form and the gateway's HTTP response
-    /// cannot drift apart.
+    /// This failure as an OpenAI-compatible surface reports it.
     ///
-    /// A provider-driven failure is answered with the upstream's own status
-    /// and family, so a genuinely unknown model surfaces as the provider's
-    /// 404 rather than as a warpllm opinion about it. Matched first: [`Error`]
-    /// is `non_exhaustive`, so a new provider variant must land here without
-    /// a change over here.
-    pub fn openai_status_and_type(&self) -> (u16, &str) {
-        match (self.provider_error(), self) {
-            (Some(upstream), _) => (
-                upstream.status,
-                upstream.error_type.as_deref().unwrap_or("api_error"),
-            ),
-            (None, Error::InvalidInput(_) | Error::InvalidModel { .. }) => {
-                (400, "invalid_request_error")
-            }
-            (None, Error::MissingApiKey { .. }) => (401, "invalid_request_error"),
-            (None, Error::Network { .. } | Error::Decode { .. }) => (502, "api_error"),
-            (None, Error::NotImplemented(_)) => (501, "api_error"),
-            // Unreachable today; a new gateway-side variant lands here rather
-            // than failing to compile a caller that must keep serving.
-            (None, _) => (500, "api_error"),
-        }
+    /// ONE conversion, two renderings: the HTTP gateway turns this into a
+    /// status line and a JSON body, a binding turns the status into the
+    /// exception class its language's OpenAI SDK would have raised. Neither
+    /// decides anything, so neither can disagree with the other.
+    ///
+    /// Normalizing, not forwarding. A failure warpllm CLASSIFIED is reported
+    /// the way OpenAI reports it — DeepSeek's 402 for an exhausted balance
+    /// comes out as 429 `insufficient_quota` — because a caller handling a
+    /// billing failure should not have to know which provider served the
+    /// request. A failure warpllm did NOT classify keeps the upstream's own
+    /// answer, since inventing one would be a guess in normalization's
+    /// clothing.
+    ///
+    /// warpllm's own taxonomy is absent by design. [`code`](Self::code) and
+    /// [`origin`](Self::origin) stay Rust-side, where changing them costs a
+    /// recompile instead of a major version.
+    pub fn to_openai(&self) -> OpenAiError {
+        crate::gateway::openai_compat::error::to_openai(self)
     }
 
-    /// The OpenAI error envelope, for the FFI boundary.
+    /// [`to_openai`](Self::to_openai), serialized for the FFI boundary.
     ///
-    /// Shaped like what the official SDKs build an error from: the `error`
-    /// object exactly as OpenAI spells it, beside the two things an SDK would
-    /// otherwise read off the HTTP response — which is the rule for what
-    /// belongs here at all. `status` and `request_id` are on `APIError`;
-    /// `retry_after` is not, so it is not here either.
-    ///
-    /// NOTHING here is warpllm's own vocabulary. The bindings are a surface
-    /// callers program against directly, so a field named here is a field
-    /// warpllm owes compatibility on — and the taxonomy is not settled enough
-    /// to promise. [`code`](Self::code) and [`origin`](Self::origin) stay
-    /// Rust-side, where changing them costs a recompile rather than a major
-    /// version.
-    ///
-    /// `code` carries the PROVIDER's own slug when there is one, so a quota
-    /// exhaustion stays `insufficient_quota` and cannot be mistaken for a
-    /// plain rate limit — the distinction survives in OpenAI's vocabulary
-    /// rather than needing warpllm's. Absent an upstream there is no
-    /// provider slug to carry, so warpllm's own stands in; `code` is
-    /// free-form in OpenAI's schema, and naming the failure is what it is for.
+    /// The JSON is the argument list the official SDKs build an error from —
+    /// status, headers, and the error object — so a binding reconstructs one
+    /// without interpreting anything.
     pub fn to_openai_json(&self) -> String {
-        let (status, error_type) = self.openai_status_and_type();
-        let upstream = self.provider_error();
-        json!({
-            "status": status,
-            "request_id": upstream.and_then(|e| e.request_id.as_deref()),
-            "error": {
-                "message": self.to_string(),
-                "type": error_type,
-                // warpllm does not model which parameter was at fault.
-                "param": serde_json::Value::Null,
-                "code": upstream
-                    .and_then(|e| e.provider_code.as_deref())
-                    .unwrap_or(self.code()),
-            },
-        })
-        .to_string()
+        serde_json::to_string(&self.to_openai())
+            .expect("an OpenAiError is plain data and always serializes")
     }
 }
 
@@ -351,21 +315,20 @@ mod tests {
     fn a_provider_failure_renders_as_an_openai_error() {
         let v = wire(&rate_limit());
         assert_eq!(v["status"], 429);
-        assert_eq!(v["request_id"], "req-1");
         assert_eq!(v["error"]["type"], "rate_limit_error");
         assert!(v["error"]["param"].is_null());
         assert!(v["error"]["message"].as_str().unwrap().contains("HTTP 429"));
-        // The PROVIDER's slug, not warpllm's `rate_limited`.
         assert_eq!(v["error"]["code"], "rate_limit_exceeded");
+        // Both live only in the response headers, so they travel as headers
+        // here too rather than as body fields OpenAI has no place for.
+        assert_eq!(v["headers"]["x-request-id"], "req-1");
+        assert_eq!(v["headers"]["retry-after"], "30");
     }
 
-    /// The reason `code` carries the provider's slug rather than warpllm's.
-    ///
     /// A quota exhaustion and a rate limit are both 429s and read alike, but
     /// no amount of backing off buys credit. OpenAI already spells the
     /// difference — `insufficient_quota` — so the distinction survives a
-    /// pure-OpenAI envelope without warpllm's taxonomy crossing the boundary
-    /// to carry it.
+    /// pure-OpenAI envelope without warpllm's taxonomy crossing to carry it.
     #[test]
     fn quota_exhaustion_stays_distinguishable_from_a_rate_limit() {
         let quota = Error::QuotaExceeded(Box::new(ProviderError {
@@ -385,10 +348,11 @@ mod tests {
         assert_eq!(quota["error"]["code"], "insufficient_quota");
     }
 
-    /// An unclassifiable failure still produces a well-formed envelope:
-    /// `status`, `type` and `code` are always present, never absent or null.
+    /// NO OPINION, so nothing is invented. warpllm did not classify this
+    /// failure, so the upstream's own status stands and `code` is left null
+    /// rather than filled with a warpllm slug an OpenAI client cannot read.
     #[test]
-    fn an_unknown_provider_failure_still_serializes() {
+    fn an_unclassified_failure_keeps_the_upstreams_own_answer() {
         let v = wire(&Error::Unknown(Box::new(ProviderError {
             provider: "demo",
             status: 402,
@@ -399,11 +363,32 @@ mod tests {
             request_id: None,
             raw_body: "Insufficient Balance".into(),
         })));
-        assert_eq!(v["status"], 402);
+        assert_eq!(v["status"], 402, "the upstream's own, untouched");
         assert_eq!(v["error"]["type"], "api_error");
-        // Nothing upstream named it, so warpllm's slug stands in.
-        assert_eq!(v["error"]["code"], "provider_unknown");
-        assert!(v["request_id"].is_null());
+        assert!(v["error"]["code"].is_null());
+        assert!(v["headers"].as_object().unwrap().is_empty());
+    }
+
+    /// The other half of the same rule: a failure warpllm DID classify is
+    /// reported as OpenAI reports it, whatever the provider called it.
+    /// DeepSeek answers an exhausted balance with 402, which OpenAI never
+    /// sends and its SDKs have no arm for — so a caller branching on a
+    /// billing failure would simply miss it.
+    #[test]
+    fn a_classified_failure_is_normalized_away_from_the_provider_spelling() {
+        let v = wire(&Error::QuotaExceeded(Box::new(ProviderError {
+            provider: "deepseek",
+            status: 402,
+            message: "Insufficient Balance".into(),
+            error_type: None,
+            provider_code: None,
+            retry_after: None,
+            request_id: None,
+            raw_body: "Insufficient Balance".into(),
+        })));
+        assert_eq!(v["status"], 429, "402 is not a status OpenAI sends");
+        assert_eq!(v["error"]["type"], "insufficient_quota");
+        assert_eq!(v["error"]["code"], "insufficient_quota");
     }
 
     /// The envelope is OpenAI's and only OpenAI's. warpllm's taxonomy is
@@ -442,11 +427,25 @@ mod tests {
                 "invalid_request_error",
             ),
             (Error::NotImplemented("streaming"), 501, "api_error"),
-            (Error::Internal("tls".into()), 500, "api_error"),
+            (Error::Internal("tls".into()), 500, "server_error"),
         ];
         for (error, status, error_type) in cases {
-            assert_eq!(error.openai_status_and_type(), (status, error_type));
+            let rendered = error.to_openai();
+            assert_eq!(rendered.status, Some(status), "{error:?}");
+            assert_eq!(rendered.error.error_type, error_type, "{error:?}");
         }
+    }
+
+    /// A body did arrive — it was just unreadable — so this is a bad
+    /// gateway, not a connection that never happened.
+    #[test]
+    fn an_unreadable_body_is_a_bad_gateway() {
+        let rendered = Error::Decode {
+            provider: "openai",
+            message: "bad json".into(),
+        }
+        .to_openai();
+        assert_eq!(rendered.status, Some(502));
     }
 
     /// The whole point of the flat enum: a caller matches one level.
@@ -569,7 +568,7 @@ mod tests {
             env_var: Some("OPENAI_API_KEY"),
         });
         assert_eq!(v["status"], 401);
-        assert_eq!(v["error"]["code"], "missing_api_key");
+        assert_eq!(v["error"]["code"], "invalid_api_key");
         assert!(
             v["error"]["message"]
                 .as_str()

@@ -4,64 +4,144 @@ import json
 from typing import Any, NoReturn
 
 
-class WarpLLMError(Exception):
-    """Every failure warpllm reports, carrying what the official OpenAI SDK
-    carries on `APIError` -- and nothing else.
+class APIError(Exception):
+    """The errors warpllm raises, matching the shape and the dispatch of the
+    official OpenAI SDK.
 
-    warpllm's own taxonomy (its `code` slugs, `origin`, the provider
-    evidence) deliberately stays in Rust. You program against this class
-    directly, so an attribute named here is one warpllm owes compatibility
-    on, and that taxonomy is not settled enough to promise.
-
-    Branch on `code`, never on `status_code`. The statuses lie in both
-    directions: a 403 permission failure and a 401 bad key are both
-    credential problems, while one 429 is a rate limit and another is a
-    billing failure that no amount of backing off will clear -- OpenAI
-    spells that second one `insufficient_quota`::
+    warpllm's own failure taxonomy is not here and never crosses from Rust.
+    It does its work before this point: warpllm knows a quota exhaustion from
+    a rate limit, and knows DeepSeek's 402 for an exhausted balance means what
+    OpenAI calls 429 `insufficient_quota` -- so what reaches you is what
+    OpenAI would have said, whichever provider served the request::
 
         try:
-            client.chat_completion({"model": "openai/gpt-5.6", "messages": m})
-        except WarpLLMError as e:
+            client.chat_completion({"model": "deepseek/deepseek-chat", ...})
+        except RateLimitError as e:
+            # A 429 covers two failures that need opposite handling. Waiting
+            # fixes one of them; only `code` says which.
             if e.code == "insufficient_quota":
                 top_up()
+            else:
+                back_off()
 
     Attributes:
-        status_code: HTTP status of the response that caused the error.
-        type: OpenAI error family, e.g. `"invalid_request_error"`.
-        code: The failure's own slug -- the provider's when an upstream
-            named it, so a quota exhaustion stays `insufficient_quota`.
-            Free-form, per OpenAI.
+        message: What went wrong.
+        code: The failure's own slug, free-form per OpenAI. The only field
+            that separates failures sharing a status.
         param: Which request parameter was at fault. warpllm does not model
             this yet, so it is always `None`.
+        type: OpenAI error family, e.g. `"invalid_request_error"`.
         request_id: The upstream's request id, when it sent one.
+        body: The error object as it came off the wire.
     """
 
     def __init__(
-        self, message: str, wire: dict[str, Any] | None = None
+        self,
+        message: str,
+        *,
+        body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
-        wire = wire or {}
-        error = wire.get("error") or {}
+        body = body or {}
         self.message = message
-        self.status_code: int | None = wire.get("status")
-        self.request_id: str | None = wire.get("request_id")
-        self.type: str | None = error.get("type")
-        self.code: str | None = error.get("code")
-        self.param: str | None = error.get("param")
+        self.headers = headers or {}
+        self.body = body
+        self.code: str | None = body.get("code")
+        self.param: str | None = body.get("param")
+        self.type: str | None = body.get("type")
+        self.request_id: str | None = self.headers.get("x-request-id")
+
+
+class APIConnectionError(APIError):
+    """warpllm never reached the provider, so there is no status and no body."""
+
+
+class APIStatusError(APIError):
+    """A failure an upstream answered with, carrying its status."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int,
+        body: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(message, body=body, headers=headers)
+        self.status_code = status_code
+
+
+class BadRequestError(APIStatusError):
+    pass
+
+
+class AuthenticationError(APIStatusError):
+    pass
+
+
+class PermissionDeniedError(APIStatusError):
+    pass
+
+
+class NotFoundError(APIStatusError):
+    pass
+
+
+class ConflictError(APIStatusError):
+    pass
+
+
+class UnprocessableEntityError(APIStatusError):
+    pass
+
+
+class RateLimitError(APIStatusError):
+    """A 429 -- and NOT only a rate limit.
+
+    An exhausted quota arrives here too, because OpenAI reports both under
+    one status and one class. Backing off clears the first and never clears
+    the second, so read `code` before retrying: `insufficient_quota` means
+    somebody has to pay.
+    """
+
+
+class InternalServerError(APIStatusError):
+    pass
+
+
+#: Keyed on status alone, exactly as the OpenAI SDK's own factory is -- which
+#: is why `code` carries everything a status cannot say.
+_BY_STATUS = {
+    400: BadRequestError,
+    401: AuthenticationError,
+    403: PermissionDeniedError,
+    404: NotFoundError,
+    409: ConflictError,
+    422: UnprocessableEntityError,
+    429: RateLimitError,
+}
 
 
 def raise_from_wire(raw: str) -> NoReturn:
-    """Turns the native layer's wire-format JSON into a `WarpLLMError`.
+    """Rebuilds the error from the native layer's JSON message.
 
-    The wire form is shaped like the arguments the OpenAI SDK builds an
-    `APIError` from: the error object exactly as OpenAI spells it, beside
-    what an SDK would otherwise read off the HTTP response.
+    Nothing is interpreted here. Rust already decided what the failure is and
+    what OpenAI calls it; this only chooses the class the status implies.
     """
     try:
         wire = json.loads(raw)
     except ValueError:
         # Not our JSON -- surface it whole rather than inventing a shape.
-        raise WarpLLMError(raw) from None
-    raise WarpLLMError(
-        (wire.get("error") or {}).get("message", raw), wire
-    ) from None
+        raise APIError(raw) from None
+
+    body = wire.get("error") or {}
+    headers = wire.get("headers") or {}
+    message = body.get("message", raw)
+    status = wire.get("status")
+    if status is None:
+        # No status means no response ever arrived.
+        raise APIConnectionError(message, body=body, headers=headers) from None
+    raise _BY_STATUS.get(
+        status, InternalServerError if status >= 500 else APIStatusError
+    )(message, status_code=status, body=body, headers=headers) from None

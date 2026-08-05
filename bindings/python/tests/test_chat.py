@@ -1,6 +1,13 @@
 import pytest
 from pytest_httpserver import HTTPServer
-from warpllm import WarpLLM, WarpLLMError
+from warpllm import (
+    APIError,
+    AuthenticationError,
+    BadRequestError,
+    InternalServerError,
+    RateLimitError,
+    WarpLLM,
+)
 
 MESSAGES = [{"role": "user", "content": "hi"}]
 
@@ -90,8 +97,10 @@ def test_401_reports_authentication(client: WarpLLM, httpserver: HTTPServer):
         status=401,
     )
 
-    with pytest.raises(WarpLLMError) as exc_info:
+    with pytest.raises(AuthenticationError) as exc_info:
         client.chat_completion(request())
+    # Every failure is an APIError, so one `except` catches the lot.
+    assert isinstance(exc_info.value, APIError)
     assert exc_info.value.status_code == 401
     assert "Incorrect API key" in str(exc_info.value)
     # The provider's own slug reaches the caller, not warpllm's spelling
@@ -120,7 +129,9 @@ def test_quota_exhaustion_is_not_reported_as_a_rate_limit(
         status=429,
     )
 
-    with pytest.raises(WarpLLMError) as exc_info:
+    # OpenAI reports both under one class, so the class cannot tell them
+    # apart and `code` is the only thing that can.
+    with pytest.raises(RateLimitError) as exc_info:
         client.chat_completion(request())
     error = exc_info.value
     assert error.code == "insufficient_quota"
@@ -146,10 +157,11 @@ def test_rate_limit_carries_the_providers_request_id(
         headers={"Retry-After": "30", "x-request-id": "req-abc"},
     )
 
-    with pytest.raises(WarpLLMError) as exc_info:
+    with pytest.raises(RateLimitError) as exc_info:
         client.chat_completion(request())
     assert exc_info.value.type == "rate_limit_error"
     assert exc_info.value.request_id == "req-abc"
+    assert exc_info.value.headers["retry-after"] == "30"
 
 
 def test_context_overflow_is_classified(
@@ -168,7 +180,7 @@ def test_context_overflow_is_classified(
         status=400,
     )
 
-    with pytest.raises(WarpLLMError) as exc_info:
+    with pytest.raises(BadRequestError) as exc_info:
         client.chat_completion(request())
     assert exc_info.value.code == "context_length_exceeded"
 
@@ -186,37 +198,40 @@ def test_code_separates_the_providers_rejection_from_warpllms(
         status=400,
     )
 
-    with pytest.raises(WarpLLMError) as upstream:
+    with pytest.raises(BadRequestError) as upstream:
         client.chat_completion(request())
 
     # ...and warpllm's own rejection never left the process.
-    with pytest.raises(WarpLLMError) as local:
+    with pytest.raises(BadRequestError) as local:
         client.chat_completion(request(model="mistral/large"))
 
     assert upstream.value.type == local.value.type == "invalid_request_error"
-    assert upstream.value.code == "provider_invalid_request"
+    # The provider named no code, and warpllm does not invent one for it.
+    assert upstream.value.code is None
     assert local.value.code == "invalid_request"
 
 
 def test_unknown_provider_rejected(client: WarpLLM):
-    with pytest.raises(WarpLLMError, match="no registered model spec"):
+    with pytest.raises(BadRequestError, match="no registered model spec"):
         client.chat_completion(request(model="mistral/large"))
 
 
 def test_bare_model_rejected(client: WarpLLM):
-    with pytest.raises(WarpLLMError, match="no registered model spec"):
+    with pytest.raises(BadRequestError, match="no registered model spec"):
         client.chat_completion(request(model="gpt-5.6"))
 
 
 def test_missing_key_names_env_var(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     client = WarpLLM()
-    with pytest.raises(WarpLLMError, match="OPENAI_API_KEY") as exc_info:
+    with pytest.raises(
+        AuthenticationError, match="OPENAI_API_KEY"
+    ) as exc_info:
         client.chat_completion(request())
-    assert exc_info.value.code == "missing_api_key"
+    assert exc_info.value.code == "invalid_api_key"
 
 
 def test_stream_reports_not_implemented(client: WarpLLM):
-    with pytest.raises(WarpLLMError, match="streaming") as exc_info:
+    with pytest.raises(InternalServerError, match="streaming") as exc_info:
         client.chat_completion(request(stream=True))
     assert exc_info.value.code == "not_implemented"

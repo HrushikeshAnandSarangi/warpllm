@@ -1,6 +1,18 @@
 export { version } from '../index.js'
 export { WarpLLM } from './client.js'
-export { WarpLLMError } from './errors.js'
+export {
+  APIConnectionError,
+  APIError,
+  AuthenticationError,
+  BadRequestError,
+  ConflictError,
+  InternalServerError,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
+  UnprocessableEntityError,
+} from './errors.js'
+export type { ErrorBody } from './errors.js'
 export type {
   Annotation,
   AnnotationURLCitation,

@@ -1,5 +1,11 @@
-//! Ingesting an OpenAI-compatible ERROR body into the gateway's canonical
-//! failure form.
+//! ERRORS, both directions: an OpenAI-compatible error body in, warpllm's
+//! canonical failure form out — and back again, as OpenAI would have
+//! reported it.
+//!
+//! Both halves are VOCABULARY, which is what a protocol module owns. Ingest
+//! asks what a provider meant by what it said; egress asks what OpenAI would
+//! have said about the same failure. Neither belongs beside the wire shapes,
+//! and neither belongs to one API surface.
 //!
 //! Sibling of [`api`](super::api) rather than a child of one of its
 //! surfaces: the error envelope is protocol-wide, shared by every endpoint
@@ -24,6 +30,7 @@
 //!   provider in [`provider_overrides`](super::provider_overrides) only where one genuinely
 //!   diverges.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -31,6 +38,7 @@ use serde_json::Value;
 use crate::error::Error;
 use crate::gateway::error::{Classified, ErrorMapper, classify};
 use crate::gateway::types::ProviderError;
+use crate::protocol::openai_compat::error::{ErrorBody, OpenAiError};
 
 /// OpenAI-compatible error bodies look like
 /// `{"error": {"message": ..., "type": ..., "code": ...}}`. Unparseable
@@ -133,6 +141,163 @@ impl ErrorMapper for OpenAiCompat {
             "api_error" => Error::ServerError,
             _ => return None,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EGRESS — a warpllm failure, rendered as OpenAI would have reported it.
+//
+// The mirror of everything above. Ingest asks "what did this provider mean";
+// egress asks "what would OpenAI have said". Both live here because both are
+// vocabulary, and vocabulary is what a protocol module owns.
+// ---------------------------------------------------------------------------
+
+/// What OpenAI answers for a failure warpllm has classified.
+///
+/// `None` in a field means warpllm has NO OPINION and the upstream's own
+/// answer stands. That is the whole design: normalizing a failure warpllm
+/// understood is the service it provides, and inventing an answer for one it
+/// did not would be a guess wearing the same clothes.
+struct Opinion {
+    status: OpinionStatus,
+    error_type: Option<&'static str>,
+    code: Option<&'static str>,
+}
+
+enum OpinionStatus {
+    /// warpllm knows what OpenAI answers for this failure, and says so even
+    /// when the upstream said something else — DeepSeek's 402 for an
+    /// exhausted balance is OpenAI's 429 `insufficient_quota`. A caller
+    /// handling a billing failure should not have to know which provider
+    /// served the request.
+    Is(u16),
+    /// No HTTP exchange happened at all, which is the case the official SDKs
+    /// raise `APIConnectionError` for.
+    NoResponse,
+    /// Unclassified: the upstream's status stands, untouched.
+    Upstream,
+}
+
+/// The one place a warpllm failure becomes OpenAI's vocabulary.
+///
+/// Codes are OpenAI's own spellings, not warpllm's. Where OpenAI has no
+/// canonical slug for a failure the provider's own is used instead, and where
+/// there is neither the field is simply absent — `code` is nullable, and a
+/// wrong slug is worse than none.
+fn opinion(error: &Error) -> Opinion {
+    use OpinionStatus::{Is, NoResponse, Upstream};
+    let (status, error_type, code) = match error {
+        // ------------------------------------------- warpllm's own failures
+        // No upstream to borrow from, and OpenAI has no vocabulary for "this
+        // gateway could not route your call", so warpllm's slug stands in.
+        Error::InvalidInput(_) | Error::InvalidModel { .. } => (
+            Is(400),
+            Some("invalid_request_error"),
+            Some("invalid_request"),
+        ),
+        // OpenAI answers a missing or unusable key the same way, so this one
+        // does have a spelling to borrow.
+        Error::MissingApiKey { .. } => (
+            Is(401),
+            Some("invalid_request_error"),
+            Some("invalid_api_key"),
+        ),
+        Error::Network { .. } => (
+            NoResponse,
+            Some("api_connection_error"),
+            Some("connection_error"),
+        ),
+        Error::Decode { .. } => (Is(502), Some("api_error"), Some("decode_error")),
+        Error::NotImplemented(_) => (Is(501), Some("api_error"), Some("not_implemented")),
+        Error::Internal(_) => (Is(500), Some("server_error"), Some("internal_error")),
+
+        // ------------------------------------ the provider's, normalized
+        Error::RateLimited(_) => (
+            Is(429),
+            Some("rate_limit_error"),
+            Some("rate_limit_exceeded"),
+        ),
+        // The reason the internal enum earns its keep. Both of these are 429
+        // to a caller, and only `code` separates a wait from a bill.
+        Error::QuotaExceeded(_) => (
+            Is(429),
+            Some("insufficient_quota"),
+            Some("insufficient_quota"),
+        ),
+        Error::Overloaded(_) => (Is(503), Some("server_error"), Some("server_error")),
+        Error::ContextLengthExceeded(_) => (
+            Is(400),
+            Some("invalid_request_error"),
+            Some("context_length_exceeded"),
+        ),
+        Error::ContentFilter(_) => (
+            Is(400),
+            Some("invalid_request_error"),
+            Some("content_filter"),
+        ),
+        Error::Authentication(_) => (
+            Is(401),
+            Some("invalid_request_error"),
+            Some("invalid_api_key"),
+        ),
+        Error::ModelNotFound(_) => (
+            Is(404),
+            Some("invalid_request_error"),
+            Some("model_not_found"),
+        ),
+        // Classified, but OpenAI has no one slug for either — the provider's
+        // own is more use than a made-up one.
+        Error::PermissionDenied(_) => (Is(403), Some("invalid_request_error"), None),
+        Error::InvalidRequest(_) => (Is(400), Some("invalid_request_error"), None),
+        // An unattributed 5xx is already the status OpenAI would send, and
+        // which 5xx it is came from the provider — nothing to improve on.
+        Error::ServerError(_) => (Upstream, Some("server_error"), None),
+        // Nothing classified it. Everything the upstream said stands.
+        _ => (Upstream, None, None),
+    };
+    Opinion {
+        status,
+        error_type,
+        code,
+    }
+}
+
+/// Renders a failure for every OpenAI-compatible surface warpllm serves.
+pub(crate) fn to_openai(error: &Error) -> OpenAiError {
+    let opinion = opinion(error);
+    let upstream = error.provider_error();
+    let mut headers = BTreeMap::new();
+    if let Some(e) = upstream {
+        // Both live only in the response headers, and both are things a
+        // caller can act on — so they travel as headers here too rather than
+        // being flattened into the body OpenAI has no field for them in.
+        if let Some(retry_after) = e.retry_after {
+            headers.insert("retry-after".to_string(), retry_after.as_secs().to_string());
+        }
+        if let Some(request_id) = &e.request_id {
+            headers.insert("x-request-id".to_string(), request_id.clone());
+        }
+    }
+    OpenAiError {
+        status: match opinion.status {
+            OpinionStatus::Is(status) => Some(status),
+            OpinionStatus::NoResponse => None,
+            OpinionStatus::Upstream => upstream.map(|e| e.status),
+        },
+        headers,
+        error: ErrorBody {
+            message: error.to_string(),
+            error_type: opinion
+                .error_type
+                .map(str::to_string)
+                .or_else(|| upstream.and_then(|e| e.error_type.clone()))
+                .unwrap_or_else(|| "api_error".to_string()),
+            param: None,
+            code: opinion
+                .code
+                .map(str::to_string)
+                .or_else(|| upstream.and_then(|e| e.provider_code.clone())),
+        },
     }
 }
 

@@ -35,6 +35,13 @@ pub use gateway::types::ProviderError;
 pub use protocol::openai_compat::chat_completions::types::{
     ChatCompletionRequestMessage, CreateChatCompletionRequest, CreateChatCompletionResponse,
 };
+/// A failure rendered the way an OpenAI-compatible surface reports it, and
+/// the only error shape warpllm shows anyone who is not writing Rust.
+///
+/// [`Error`] stays internal — it knows a quota exhaustion from a rate limit,
+/// which is what lets [`Error::to_openai`] emit OpenAI's spelling for either
+/// no matter which provider served the request.
+pub use protocol::openai_compat::error::{ErrorBody, OpenAiError};
 /// The registry's public face: a provider, a model, and the lookup that hands
 /// back one of each. `registry` itself stays private — the roster, the schema,
 /// and the loading are not API.

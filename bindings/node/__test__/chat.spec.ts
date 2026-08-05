@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, expect, test } from 'vitest'
 
-import { WarpLLM, WarpLLMError } from '../dist/index.js'
+import {
+  APIError,
+  AuthenticationError,
+  BadRequestError,
+  InternalServerError,
+  RateLimitError,
+  WarpLLM,
+} from '../dist/index.js'
 import { MockServer } from './mock-server.js'
 
 const MESSAGES = [{ role: 'user', content: 'hi' }]
@@ -53,11 +60,10 @@ afterEach(async () => {
   await server.close()
 })
 
-/** Every failure is one class now, so every assertion reads `code`. */
 const failure = async (req: Parameters<WarpLLM['chatCompletion']>[0]) => {
   const err = await client.chatCompletion(req).catch((e: unknown) => e)
-  expect(err).toBeInstanceOf(WarpLLMError)
-  return err as WarpLLMError
+  expect(err).toBeInstanceOf(APIError)
+  return err as APIError
 }
 
 test('openai happy path', async () => {
@@ -106,10 +112,9 @@ test('401 reports authentication', async () => {
 
   const err = await failure(request())
 
+  expect(err).toBeInstanceOf(AuthenticationError)
   expect(err.status).toBe(401)
   expect(err.message).toContain('Incorrect API key')
-  // The provider's own slug reaches the caller, not warpllm's spelling of
-  // it — warpllm would have called this one `authentication`.
   expect(err.code).toBe('invalid_api_key')
   expect(err.type).toBe('invalid_request_error')
 })
@@ -129,9 +134,12 @@ test('quota exhaustion is not reported as a rate limit', async () => {
 
   const err = await failure(request())
 
+  // OpenAI reports both under one class, so the class cannot tell them
+  // apart and `code` is the only thing that can.
+  expect(err).toBeInstanceOf(RateLimitError)
+  expect(err.status).toBe(429)
   expect(err.code).toBe('insufficient_quota')
   expect(err.code).not.toBe('rate_limit_exceeded')
-  expect(err.status).toBe(429)
 })
 
 test('a rate limit carries the provider’s request id', async () => {
@@ -143,9 +151,11 @@ test('a rate limit carries the provider’s request id', async () => {
 
   const err = await failure(request())
 
+  expect(err).toBeInstanceOf(RateLimitError)
   expect(err.type).toBe('rate_limit_error')
-  // Lives only in a header, so it proves the transport kept it.
+  // Both live only in headers, so they prove the transport kept them.
   expect(err.requestID).toBe('req-abc')
+  expect(err.headers?.['retry-after']).toBe('30')
 })
 
 // A context overflow must not read as a plain bad request: the remedy is a
@@ -159,7 +169,10 @@ test('context overflow is classified', async () => {
     },
   })
 
-  expect((await failure(request())).code).toBe('context_length_exceeded')
+  const err = await failure(request())
+
+  expect(err).toBeInstanceOf(BadRequestError)
+  expect(err.code).toBe('context_length_exceeded')
 })
 
 // The two halves of one flat code space. A provider rejecting the request
@@ -174,9 +187,12 @@ test('code separates the provider’s rejection from warpllm’s', async () => {
   // ...and warpllm's own rejection never left the process.
   const local = await failure(request('mistral/large'))
 
+  expect(upstream).toBeInstanceOf(BadRequestError)
+  expect(local).toBeInstanceOf(BadRequestError)
   expect(upstream.type).toBe('invalid_request_error')
   expect(local.type).toBe('invalid_request_error')
-  expect(upstream.code).toBe('provider_invalid_request')
+  // The provider named no code, and warpllm does not invent one for it.
+  expect(upstream.code).toBeNull()
   expect(local.code).toBe('invalid_request')
 })
 
@@ -193,6 +209,7 @@ test('bare model name is rejected', async () => {
 test('stream: true reports not implemented', async () => {
   const err = await failure(request('openai/gpt-5.6', { stream: true }))
 
+  expect(err).toBeInstanceOf(InternalServerError)
   expect(err.code).toBe('not_implemented')
   expect(server.requests).toHaveLength(0)
 })

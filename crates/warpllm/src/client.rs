@@ -151,7 +151,8 @@ mod tests {
         // OpenAI envelope has no place for.
         let wire: serde_json::Value = serde_json::from_str(&err.to_openai_json()).unwrap();
         assert_eq!(wire["status"], 401);
-        assert_eq!(wire["error"]["code"], "missing_api_key");
+        // OpenAI's spelling for an unusable key, not warpllm's.
+        assert_eq!(wire["error"]["code"], "invalid_api_key");
         assert!(
             wire["error"]["message"]
                 .as_str()

@@ -139,8 +139,12 @@ fn caller_bearer_is_ignored_never_forwarded() {
     });
 }
 
+/// An upstream failure, reported in OpenAI's vocabulary rather than the
+/// provider's. The status here already matches what OpenAI would send, so it
+/// survives unchanged — what the gateway proves is that the body a caller
+/// reads is the same one the in-process SDK hands back.
 #[test]
-fn upstream_status_and_error_type_pass_through() {
+fn an_upstream_failure_is_reported_in_openai_vocabulary() {
     with_gateway_key(async {
         let upstream = MockServer::start().await;
         Mock::given(method("POST"))
@@ -173,13 +177,14 @@ fn upstream_status_and_error_type_pass_through() {
         );
 
         let body: Value = response.json().await.unwrap();
-        // `type` keeps its OpenAI meaning for official SDKs; `code` and
-        // `origin` are warpllm's flat taxonomy beside it.
-        assert_eq!(body["error"]["type"], "rate_limit_exceeded");
-        assert_eq!(body["error"]["code"], "rate_limited");
+        // `type` and `code` are OpenAI's own spellings, identical to what a
+        // caller reaching warpllm in-process would see. warpllm's taxonomy
+        // rides beside them, on this surface only.
+        assert_eq!(body["error"]["type"], "rate_limit_error");
+        assert_eq!(body["error"]["code"], "rate_limit_exceeded");
         assert_eq!(body["error"]["origin"], "provider");
-        assert_eq!(body["error"]["retry_after_seconds"], 30);
-        assert_eq!(body["error"]["request_id"], "req-upstream-1");
+        assert_eq!(body["error"]["warpllm_code"], "rate_limited");
+        assert_eq!(body["error"]["provider"], "openai");
     });
 }
 
@@ -211,12 +216,12 @@ fn quota_exhaustion_is_not_reported_as_a_rate_limit() {
         assert_eq!(response.status(), 429);
         let body: Value = response.json().await.unwrap();
         assert_eq!(
-            body["error"]["code"], "quota_exceeded",
+            body["error"]["code"], "insufficient_quota",
             "reported as a rate limit, a backoff loop never resolves this"
         );
         assert_eq!(body["error"]["origin"], "provider");
-        // The code that produced the classification is retained.
-        assert_eq!(body["error"]["provider_code"], "insufficient_quota");
+        // warpllm's own name for it stays reachable for anyone debugging.
+        assert_eq!(body["error"]["warpllm_code"], "quota_exceeded");
     });
 }
 

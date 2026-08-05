@@ -1,14 +1,36 @@
 from warpllm._warpllm import version
 
 from ._client import AsyncWarpLLM, WarpLLM
-from ._exceptions import WarpLLMError
+from ._exceptions import (
+    APIConnectionError,
+    APIError,
+    APIStatusError,
+    AuthenticationError,
+    BadRequestError,
+    ConflictError,
+    InternalServerError,
+    NotFoundError,
+    PermissionDeniedError,
+    RateLimitError,
+    UnprocessableEntityError,
+)
 
 __version__ = version()
 
 __all__ = [
+    "APIConnectionError",
+    "APIError",
+    "APIStatusError",
     "AsyncWarpLLM",
+    "AuthenticationError",
+    "BadRequestError",
+    "ConflictError",
+    "InternalServerError",
+    "NotFoundError",
+    "PermissionDeniedError",
+    "RateLimitError",
+    "UnprocessableEntityError",
     "WarpLLM",
-    "WarpLLMError",
     "__version__",
     "version",
 ]
