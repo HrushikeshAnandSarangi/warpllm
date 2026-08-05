@@ -91,14 +91,45 @@ test('openai happy path', async () => {
 // The request is forwarded verbatim rather than rebuilt field by field, so a
 // parameter the wrapper does not model still reaches the provider. The old
 // wrapper copied a fixed list of keys and silently dropped the rest.
+//
+// Written as a bare literal, not `{ ...request(), seed: 7 }`: spreading a
+// `Record<string, unknown>` gives the literal an index signature of its own,
+// which turns excess-property checking off and would let this pass however
+// the declaration was generated. A fresh literal is the only form that
+// actually tests it.
 test('a request field the wrapper does not model still goes upstream', async () => {
   server.respondWith(200, OPENAI_COMPLETION)
 
   // No cast: an unmodelled OpenAI parameter has to type-check, or the
   // wrapper does not accept an OpenAI-compatible request.
-  await client.chatCompletion({ ...request(), max_tokens: 64, seed: 7 })
+  await client.chatCompletion({
+    model: 'openai/gpt-5.6',
+    messages: MESSAGES,
+    max_tokens: 64,
+    seed: 7,
+    response_format: { type: 'json_object' },
+  })
 
-  expect(server.requests[0].body).toMatchObject({ max_tokens: 64, seed: 7 })
+  expect(server.requests[0].body).toMatchObject({
+    max_tokens: 64,
+    seed: 7,
+    response_format: { type: 'json_object' },
+  })
+})
+
+// The other half of that bargain, and the reason the generated declarations
+// carry no index signature: an open request type would also open the response,
+// and a misspelled field access would quietly type as `unknown` instead of
+// failing the build. Checked at compile time — `@ts-expect-error` fails the
+// typecheck if the line it guards ever stops being an error.
+test('a misspelled response field does not compile', async () => {
+  server.respondWith(200, OPENAI_COMPLETION)
+
+  const completion = await client.chatCompletion(request())
+
+  // @ts-expect-error `choicez` is not a field on CreateChatCompletionResponse
+  expect(completion.choicez).toBeUndefined()
+  expect(completion.choices).toHaveLength(1)
 })
 
 test('401 reports authentication', async () => {

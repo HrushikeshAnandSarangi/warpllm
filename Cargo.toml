@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/warpllm",
+    "crates/warpllm-codegen",
     "crates/warpllm-server",
     "bindings/python",
     "bindings/node",
@@ -26,6 +27,10 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # `include_str!` and parsed once on first lookup. The upstream `serde_yaml` was
 # archived in 2024; this is The YAML Organization's maintained continuation.
 yaml_serde = "0.10.4"
+# Binding metadata is optional on the published core. The non-published
+# `warpllm-codegen` workspace tool is the only consumer.
+ts-rs = { version = "12", features = ["serde-json-impl"] }
+schemars = "1"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 tower-http = { version = "0.6", features = ["trace"] }

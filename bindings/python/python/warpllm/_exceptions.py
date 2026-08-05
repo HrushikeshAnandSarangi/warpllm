@@ -110,16 +110,18 @@ class InternalServerError(APIStatusError):
     pass
 
 
-#: Keyed on status alone, exactly as the OpenAI SDK's own factory is -- which
-#: is why `code` carries everything a status cannot say.
-_BY_STATUS = {
-    400: BadRequestError,
-    401: AuthenticationError,
-    403: PermissionDeniedError,
-    404: NotFoundError,
-    409: ConflictError,
-    422: UnprocessableEntityError,
-    429: RateLimitError,
+#: Rust has already interpreted the status. This table only turns its stable
+#: discriminant into the corresponding Python class object.
+_BY_CLASS = {
+    "api_status": APIStatusError,
+    "bad_request": BadRequestError,
+    "authentication": AuthenticationError,
+    "permission_denied": PermissionDeniedError,
+    "not_found": NotFoundError,
+    "conflict": ConflictError,
+    "unprocessable_entity": UnprocessableEntityError,
+    "rate_limit": RateLimitError,
+    "internal_server": InternalServerError,
 }
 
 
@@ -127,7 +129,8 @@ def raise_from_wire(raw: str) -> NoReturn:
     """Rebuilds the error from the native layer's JSON message.
 
     Nothing is interpreted here. Rust already decided what the failure is and
-    what OpenAI calls it; this only chooses the class the status implies.
+    what OpenAI calls it; this only instantiates the class named by the wire
+    discriminant.
     """
     try:
         wire = json.loads(raw)
@@ -138,10 +141,12 @@ def raise_from_wire(raw: str) -> NoReturn:
     body = wire.get("error") or {}
     headers = wire.get("headers") or {}
     message = body.get("message", raw)
-    status = wire.get("status")
-    if status is None:
-        # No status means no response ever arrived.
+    if wire.get("class") == "api_connection":
         raise APIConnectionError(message, body=body, headers=headers) from None
-    raise _BY_STATUS.get(
-        status, InternalServerError if status >= 500 else APIStatusError
-    )(message, status_code=status, body=body, headers=headers) from None
+    status = wire.get("status")
+    Class = _BY_CLASS.get(wire.get("class"), APIStatusError)
+    if status is None:
+        raise APIError(message, body=body, headers=headers) from None
+    raise Class(
+        message, status_code=status, body=body, headers=headers
+    ) from None

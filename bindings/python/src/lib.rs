@@ -16,33 +16,27 @@ fn version() -> &'static str {
     warpllm::version()
 }
 
-async fn run_chat(client: Arc<warpllm::Client>, request_json: String) -> Result<String, String> {
-    let request: warpllm::CreateChatCompletionRequest = serde_json::from_str(&request_json)
-        .map_err(|e| warpllm::Error::InvalidInput(e.to_string()).to_openai_json())?;
-    let completion = client
-        .chat_completion(request)
+async fn run_chat(
+    client: Arc<warpllm::JsonClient>,
+    request_json: String,
+) -> Result<String, String> {
+    client
+        .chat_completion(&request_json)
         .await
-        .map_err(|e| e.to_openai_json())?;
-    serde_json::to_string(&completion)
-        .map_err(|e| warpllm::Error::InvalidInput(e.to_string()).to_openai_json())
+        .map_err(|error| error.to_openai_json())
 }
 
 #[pyclass]
 struct Client {
-    inner: Arc<warpllm::Client>,
+    inner: Arc<warpllm::JsonClient>,
 }
 
 #[pymethods]
 impl Client {
     #[new]
     fn new(config_json: String) -> PyResult<Self> {
-        let config: warpllm::ClientConfig = serde_json::from_str(&config_json).map_err(|e| {
-            WarpLLMNativeError::new_err(
-                warpllm::Error::InvalidInput(e.to_string()).to_openai_json(),
-            )
-        })?;
-        let inner = warpllm::Client::new(config)
-            .map_err(|e| WarpLLMNativeError::new_err(e.to_openai_json()))?;
+        let inner = warpllm::JsonClient::new(&config_json)
+            .map_err(|error| WarpLLMNativeError::new_err(error.to_openai_json()))?;
         Ok(Self {
             inner: Arc::new(inner),
         })

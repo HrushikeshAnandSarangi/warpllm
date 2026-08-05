@@ -29,46 +29,60 @@ use serde::{Deserialize, Serialize};
 /// before this crate ships explicit support for them.
 pub type UnknownFields = serde_json::Map<String, serde_json::Value>;
 
+// Codegen policy: Rust and Serde are the contract. Codegen-only attributes may
+// enable derives or compensate for representation details a generator cannot
+// infer (such as output optionality). Do not add literal unions, schema enums,
+// const values, ranges, or other constraints that are absent from the Rust
+// field type; OpenAI-compatible providers extend these values independently.
+
 // ---------------------------------------------------------------------------
 // Response — the `chat.completion` object
 // <https://developers.openai.com/api/reference/resources/chat>
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct CreateChatCompletionResponse {
     pub id: String,
     pub choices: Vec<Choice>,
     pub created: u64,
     /// Echoes the caller-supplied `provider/model` string.
     pub model: String,
-    /// Always `"chat.completion"`.
+    /// Conventionally `"chat.completion"`; compatible providers may differ.
     pub object: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub moderation: Option<ChatCompletionModeration>,
-    /// `"auto"`, `"default"`, `"flex"`, `"scale"`, or `"priority"`.
+    /// Provider-defined service tier identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub service_tier: Option<String>,
     /// Deprecated upstream but still returned; passed through as-is.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub system_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub usage: Option<CompletionUsage>,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct Choice {
-    /// `"stop"`, `"length"`, `"tool_calls"`, `"content_filter"`, or
-    /// `"function_call"`.
+    /// Provider-defined reason that generation stopped.
     pub finish_reason: String,
     pub index: u32,
     /// Optional per the docs; `Option` also tolerates the explicit
     /// `"logprobs": null` some OpenAI-compatible backends emit.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub logprobs: Option<ChoiceLogprobs>,
     pub message: ChatCompletionResponseMessage,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
@@ -76,90 +90,112 @@ pub struct Choice {
 /// are looser — DeepSeek omits `refusal` entirely and can null `content` —
 /// so both are optional here and absent fields stay off the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChoiceLogprobs {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub content: Option<Vec<ChatCompletionTokenLogprob>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub refusal: Option<Vec<ChatCompletionTokenLogprob>>,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChatCompletionTokenLogprob {
     pub token: String,
     pub bytes: Option<Vec<u8>>,
     pub logprob: f64,
     pub top_logprobs: Vec<TopLogprob>,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct TopLogprob {
     pub token: String,
     pub bytes: Option<Vec<u8>>,
     pub logprob: f64,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChatCompletionResponseMessage {
     pub content: Option<String>,
     pub refusal: Option<String>,
-    /// Always `"assistant"`.
+    /// Conventionally `"assistant"`; compatible providers may differ.
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub annotations: Option<Vec<Annotation>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub audio: Option<ChatCompletionAudio>,
     /// Deprecated upstream in favor of `tool_calls`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub function_call: Option<FunctionCall>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub tool_calls: Option<Vec<ChatCompletionMessageToolCallUnion>>,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct Annotation {
-    /// Always `"url_citation"`.
+    /// Conventionally `"url_citation"`; compatible providers may differ.
     #[serde(rename = "type")]
     pub r#type: String,
     pub url_citation: AnnotationURLCitation,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 // Exact upstream name; OpenAI-shape fidelity outranks Rust acronym casing.
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct AnnotationURLCitation {
     pub end_index: u32,
     pub start_index: u32,
     pub title: String,
     pub url: String,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 /// Deprecated upstream in favor of tool calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct FunctionCall {
     /// JSON-encoded arguments; model-generated, so may be invalid JSON.
     pub arguments: String,
     pub name: String,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
-/// Union discriminated by `type` (`"function"` or `"custom"`). Untagged so
-/// the structs own the `type` field (an internal serde tag would be captured
-/// by their flattened `unknown_fields` and emitted twice); each variant's
-/// required `function`/`custom` field keeps dispatch unambiguous.
+/// Function- or custom-shaped tool call.
+// Untagged so the structs own the `type` field: an internal serde tag would be
+// captured by their flattened `unknown_fields` and emitted twice. Each
+// variant's required `function`/`custom` field keeps dispatch unambiguous even
+// when a provider sends a nonstandard `type` string.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum ChatCompletionMessageToolCallUnion {
     Function(ChatCompletionMessageToolCall),
@@ -167,45 +203,54 @@ pub enum ChatCompletionMessageToolCallUnion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChatCompletionMessageToolCall {
     pub id: String,
-    /// Always `"function"`.
+    /// Conventionally `"function"`; compatible providers may differ.
     #[serde(rename = "type")]
     pub r#type: String,
     pub function: Function,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct Function {
     /// JSON-encoded arguments; model-generated, so may be invalid JSON.
     pub arguments: String,
     pub name: String,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChatCompletionMessageCustomToolCall {
     pub id: String,
-    /// Always `"custom"`.
+    /// Conventionally `"custom"`; compatible providers may differ.
     #[serde(rename = "type")]
     pub r#type: String,
     pub custom: Custom,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct Custom {
     pub input: String,
     pub name: String,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChatCompletionAudio {
     pub id: String,
     /// Base64-encoded audio bytes.
@@ -213,55 +258,73 @@ pub struct ChatCompletionAudio {
     pub expires_at: u64,
     pub transcript: String,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct CompletionUsage {
     pub completion_tokens: u32,
     pub prompt_tokens: u32,
     pub total_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub completion_tokens_details: Option<CompletionTokensDetails>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct CompletionTokensDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub accepted_prediction_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub audio_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub reasoning_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub rejected_prediction_tokens: Option<u32>,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct PromptTokensDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub audio_tokens: Option<u32>,
     /// Unadjusted number of prompt tokens written to cache.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub cache_write_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
     pub cached_tokens: Option<u32>,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 /// Moderation results for the request input and the generated output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChatCompletionModeration {
     pub input: ModerationOutcome,
     pub output: ModerationOutcome,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
@@ -269,12 +332,12 @@ pub struct ChatCompletionModeration {
 // `input` and `output`.
 
 /// Union of [`ChatCompletionModerationResults`] or
-/// [`ChatCompletionModerationError`], each carrying its literal `type`
-/// discriminator (`"moderation_results"` / `"error"`). Untagged so the
-/// structs own the `type` field exactly as documented; their required fields
-/// are disjoint, so dispatch is unambiguous. The spec leaves this union
-/// unnamed; only this enum's name is Rust-side.
+/// [`ChatCompletionModerationError`]. Untagged so the structs own the `type`
+/// field exactly as received; their required fields are disjoint, so dispatch
+/// is unambiguous. The spec leaves this union unnamed; only this enum's name is
+/// Rust-side.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum ModerationOutcome {
     ModerationResults(ChatCompletionModerationResults),
@@ -282,18 +345,21 @@ pub enum ModerationOutcome {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChatCompletionModerationResults {
     pub model: String,
     pub results: Vec<ModerationResultBody>,
-    /// Always `"moderation_results"`.
+    /// Conventionally `"moderation_results"`; compatible providers may differ.
     #[serde(rename = "type")]
     pub r#type: String,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 /// One verdict in `ChatCompletionModerationResults.results`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ModerationResultBody {
     pub categories: HashMap<String, bool>,
     /// Values are input types, e.g. `"text"` or `"image"`.
@@ -301,22 +367,25 @@ pub struct ModerationResultBody {
     pub category_scores: HashMap<String, f64>,
     pub flagged: bool,
     pub model: String,
-    /// Always `"moderation_result"`.
+    /// Conventionally `"moderation_result"`; compatible providers may differ.
     #[serde(rename = "type")]
     pub r#type: String,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 /// Moderation error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChatCompletionModerationError {
     pub code: String,
     pub message: String,
-    /// Always `"error"`.
+    /// Conventionally `"error"`; compatible providers may differ.
     #[serde(rename = "type")]
     pub r#type: String,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
@@ -325,32 +394,50 @@ pub struct ChatCompletionModerationError {
 // <https://platform.openai.com/docs/api-reference/chat/create>
 // ---------------------------------------------------------------------------
 
+// Doc comments on these types are REPUBLISHED: ts-rs copies them verbatim into
+// the generated `.d.ts` that ships to npm. Rationale meant for this crate goes
+// in `//` comments like this one, which ts-rs does not copy — a `///` here
+// would put warpllm's internals, and any rustdoc `[link]` syntax that means
+// nothing in TypeScript, into a published declaration file.
+//
+// `unknown_fields` is `ts(skip)` here, same as on responses. The method taking
+// this request is generic in TypeScript and Mapping-based in Python, so both
+// languages accept extensions without weakening response field checking.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct CreateChatCompletionRequest {
     /// Model string in `provider/model` form, e.g. `"openai/gpt-5.6"`.
     pub model: String,
     pub messages: Vec<ChatCompletionRequestMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional = nullable))]
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional = nullable))]
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional = nullable))]
     pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional = nullable))]
     pub stop: Option<Vec<String>>,
     // Not implemented.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional = nullable))]
     pub stream: Option<bool>,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChatCompletionRequestMessage {
-    /// `"system"`, `"user"`, or `"assistant"`.
+    /// Provider-defined role; common values include `"system"` and `"user"`.
     pub role: String,
     pub content: String,
     #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
@@ -435,6 +522,49 @@ mod tests {
             completion.usage.as_ref().unwrap().unknown_fields["new_usage_field"],
             7
         );
+        assert_eq!(serde_json::to_value(&completion).unwrap(), body);
+    }
+
+    /// These are strings in the compatibility protocol, not closed enums.
+    /// Providers routinely add values before any shared specification does.
+    #[test]
+    fn provider_defined_string_values_round_trip() {
+        let body = serde_json::json!({
+            "id": "chatcmpl-123",
+            "choices": [{
+                "finish_reason": "provider_finished_elsewhere",
+                "index": 0,
+                "message": {
+                    "content": "hi",
+                    "refusal": null,
+                    "role": "critic",
+                    "annotations": [{
+                        "type": "provider_citation",
+                        "url_citation": {
+                            "end_index": 2,
+                            "start_index": 0,
+                            "title": "Example",
+                            "url": "https://example.com"
+                        }
+                    }],
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "provider_function",
+                        "function": {"arguments": "{}", "name": "search"}
+                    }]
+                }
+            }],
+            "created": 1,
+            "model": "provider/model",
+            "object": "provider.chat.result",
+            "service_tier": "provider_experimental"
+        });
+
+        let completion: CreateChatCompletionResponse =
+            serde_json::from_value(body.clone()).unwrap();
+
+        assert_eq!(completion.object, "provider.chat.result");
+        assert_eq!(completion.choices[0].message.role, "critic");
         assert_eq!(serde_json::to_value(&completion).unwrap(), body);
     }
 

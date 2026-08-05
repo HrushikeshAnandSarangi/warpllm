@@ -17,6 +17,13 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 yaml_serde.workspace = true
+ts-rs = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+
+[features]
+# Adds schema/type metadata for the non-published workspace generator. It has
+# no tests, file writes, environment variables, or repository-layout assumptions.
+codegen = ["dep:ts-rs", "dep:schemars"]
 
 [dev-dependencies]
 wiremock = "0.6"

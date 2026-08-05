@@ -61,11 +61,13 @@ crates/warpllm-server/   The OpenAI-compatible HTTP gateway (unreleased),
                          an axum server wrapping the SDK.
 bindings/python/         PyO3 + maturin. Rust glue in src/, the importable
                          package in python/warpllm/, tests in tests/.
+  python/warpllm/_generated/   Generated. Do not edit.
 bindings/node/           napi-rs. Rust glue in src/, TypeScript in src-ts/,
                          tests in __test__/.
+  src-ts/generated/      Generated. Do not edit.
 ```
 
-The two ideas worth knowing before you read the code:
+The three ideas worth knowing before you read the code:
 
 * **The registry is the roster, and it fails closed.** A model warpllm doesn't
   know is an error, never a guess at some upstream default. The header comment
@@ -79,6 +81,10 @@ The two ideas worth knowing before you read the code:
   — which is why
   adding an OpenAI-compatible provider is usually a registry edit and no new
   Rust. A backend whose wire SHAPE differs is a new protocol, not an override.
+* **The bindings hold no wire shapes of their own.** The non-published
+  `warpllm-codegen` workspace tool emits their generated request, response, and
+  error types from Rust. Small handwritten facade files decide which names are
+  public; they do not repeat any fields.
 
 ## Development Setup
 
@@ -122,6 +128,14 @@ cargo test --workspace
 Plus the suite for any binding you touched, from the commands above. Tests are
 part of the change, not a follow-up — if you add a provider, add the case that
 routes to it.
+
+If you changed a request, response, or FFI error type, regenerate the bindings
+and commit the result. The Python development environment must already be
+synced; CI runs the same command and fails on any difference:
+
+```bash
+cargo run -p warpllm-codegen
+```
 
 ### Adding a provider or model
 

@@ -13,7 +13,6 @@ crate-type = ["cdylib"]
 warpllm.workspace = true
 napi = { version = "3", default-features = false, features = ["napi8", "async"] }
 napi-derive = "3"
-serde_json.workspace = true
 
 [build-dependencies]
 napi-build = "2"

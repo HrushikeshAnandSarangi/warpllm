@@ -85,6 +85,20 @@ def test_the_response_is_not_narrowed_on_the_way_through(
     assert completion["some_field_python_never_heard_of"] == {"nested": [1]}
 
 
+def test_an_unmodeled_request_field_reaches_rust_and_the_provider(
+    client: WarpLLM, httpserver: HTTPServer, openai_completion_body
+):
+    httpserver.expect_request("/chat/completions").respond_with_json(
+        openai_completion_body
+    )
+
+    client.chat_completion(request(seed=7, future_parameter={"enabled": True}))
+
+    sent = httpserver.log[0][0].get_json()
+    assert sent["seed"] == 7
+    assert sent["future_parameter"] == {"enabled": True}
+
+
 def test_401_reports_authentication(client: WarpLLM, httpserver: HTTPServer):
     httpserver.expect_request("/chat/completions").respond_with_json(
         {

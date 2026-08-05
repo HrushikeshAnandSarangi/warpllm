@@ -1,5 +1,6 @@
 export { version } from '../index.js'
 export { WarpLLM } from './client.js'
+export type { WarpLLMOptions } from './client.js'
 export {
   APIConnectionError,
   APIError,
@@ -12,29 +13,4 @@ export {
   RateLimitError,
   UnprocessableEntityError,
 } from './errors.js'
-export type { ErrorBody } from './errors.js'
-export type {
-  Annotation,
-  AnnotationURLCitation,
-  ChatCompletionAudio,
-  ChatCompletionMessage,
-  ChatCompletionMessageCustomToolCall,
-  ChatCompletionMessageFunctionToolCall,
-  ChatCompletionMessageToolCall,
-  ChatCompletionRequestMessage,
-  ChatCompletionTokenLogprob,
-  Choice,
-  ChoiceLogprobs,
-  CompletionTokensDetails,
-  CompletionUsage,
-  CreateChatCompletionRequest,
-  CreateChatCompletionResponse,
-  Error,
-  FunctionCall,
-  Moderation,
-  ModerationResult,
-  ModerationResults,
-  PromptTokensDetails,
-  TopLogprob,
-  WarpLLMOptions,
-} from './types.js'
+export type * from './types.js'

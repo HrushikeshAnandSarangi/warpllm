@@ -5,6 +5,7 @@ mod config;
 mod error;
 mod gateway;
 mod http;
+mod json_client;
 mod registry;
 
 pub mod protocol;
@@ -18,6 +19,7 @@ pub use error::{Error, Origin, Result};
 /// provider-driven [`Error`] variant carries. `gateway` itself stays private,
 /// exactly as `registry` does; this is its only public shape.
 pub use gateway::types::ProviderError;
+pub use json_client::JsonClient;
 /// Everything a caller must NAME to make a call and hold its result: the
 /// request, the message it is built from, and the response handed back by
 /// [`Client::chat_completion`].
@@ -41,7 +43,7 @@ pub use protocol::openai_compat::chat_completions::types::{
 /// [`Error`] stays internal — it knows a quota exhaustion from a rate limit,
 /// which is what lets [`Error::to_openai`] emit OpenAI's spelling for either
 /// no matter which provider served the request.
-pub use protocol::openai_compat::error::{ErrorBody, OpenAiError};
+pub use protocol::openai_compat::error::{ErrorBody, ErrorClass, OpenAiError};
 /// The registry's public face: a provider, a model, and the lookup that hands
 /// back one of each. `registry` itself stays private — the roster, the schema,
 /// and the loading are not API.

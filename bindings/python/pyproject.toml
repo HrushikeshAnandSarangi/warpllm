@@ -13,12 +13,27 @@ classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
+dependencies = [
+    # `warpllm._generated` imports `NotRequired` from here unconditionally,
+    # because it is generated for the 3.10 floor and `typing` only grows the
+    # name in 3.11. Unconditional on purpose: a `python_version < '3.11'`
+    # marker would leave newer interpreters importing a package they were
+    # never given. Drop it when the floor moves past 3.10.
+    "typing-extensions>=4.6",
+]
 
 [dependency-groups]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.25",
     "pytest-httpserver>=1.1",
+    # Used by the workspace's non-published Rust codegen tool. The wheel ships
+    # the generated output, never the generator.
+    "datamodel-code-generator>=0.35",
+    # The generated TypedDicts are only worth generating if something checks
+    # them; `tests/test_typing.py` is this package's answer to the Node
+    # binding's `npm run typecheck`.
+    "mypy>=1.11",
 ]
 
 [tool.maturin]

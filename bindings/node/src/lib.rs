@@ -15,16 +15,14 @@ fn wire_err(e: warpllm::Error) -> napi::Error {
 
 #[napi]
 pub struct Client {
-    inner: Arc<warpllm::Client>,
+    inner: Arc<warpllm::JsonClient>,
 }
 
 #[napi]
 impl Client {
     #[napi(constructor)]
     pub fn new(config_json: String) -> napi::Result<Self> {
-        let config: warpllm::ClientConfig = serde_json::from_str(&config_json)
-            .map_err(|e| wire_err(warpllm::Error::InvalidInput(e.to_string())))?;
-        let inner = warpllm::Client::new(config).map_err(wire_err)?;
+        let inner = warpllm::JsonClient::new(&config_json).map_err(wire_err)?;
         Ok(Self {
             inner: Arc::new(inner),
         })
@@ -33,10 +31,9 @@ impl Client {
     #[napi]
     pub async fn chat_completion(&self, request_json: String) -> napi::Result<String> {
         let client = self.inner.clone();
-        let request: warpllm::CreateChatCompletionRequest = serde_json::from_str(&request_json)
-            .map_err(|e| wire_err(warpllm::Error::InvalidInput(e.to_string())))?;
-        let completion = client.chat_completion(request).await.map_err(wire_err)?;
-        serde_json::to_string(&completion)
-            .map_err(|e| wire_err(warpllm::Error::InvalidInput(e.to_string())))
+        client
+            .chat_completion(&request_json)
+            .await
+            .map_err(wire_err)
     }
 }

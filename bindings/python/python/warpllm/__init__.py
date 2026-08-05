@@ -14,6 +14,11 @@ from ._exceptions import (
     RateLimitError,
     UnprocessableEntityError,
 )
+from .types import (
+    ChatCompletionRequestMessage,
+    CreateChatCompletionRequest,
+    CreateChatCompletionResponse,
+)
 
 __version__ = version()
 
@@ -25,6 +30,9 @@ __all__ = [
     "AuthenticationError",
     "BadRequestError",
     "ConflictError",
+    "ChatCompletionRequestMessage",
+    "CreateChatCompletionRequest",
+    "CreateChatCompletionResponse",
     "InternalServerError",
     "NotFoundError",
     "PermissionDeniedError",

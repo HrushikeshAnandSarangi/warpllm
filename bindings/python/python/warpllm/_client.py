@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Mapping, cast
 
 from warpllm._warpllm import Client as _NativeClient
 from warpllm._warpllm import WarpLLMNativeError
 
 from ._exceptions import raise_from_wire
+
+if TYPE_CHECKING:
+    from .types import CreateChatCompletionResponse
 
 
 def _native_client(base_url: str | None, timeout: int | None) -> _NativeClient:
@@ -34,7 +37,9 @@ class WarpLLM:
     ) -> None:
         self._native = _native_client(base_url, timeout)
 
-    def chat_completion(self, request: dict[str, Any]) -> dict[str, Any]:
+    def chat_completion(
+        self, request: Mapping[str, object]
+    ) -> CreateChatCompletionResponse:
         """One method, mirroring Rust's `client.chat_completion(request)`.
 
         The request crosses verbatim -- its fields are Rust's, so nothing
@@ -43,12 +48,16 @@ class WarpLLM:
         already parsed and validated it, and re-hydrating it into Python
         objects would re-do that work to hand back the same fields under the
         same names.
+
+        `warpllm.types.CreateChatCompletionRequest` is available when callers
+        want strict authoring help. This boundary accepts any mapping because
+        Rust deliberately forwards fields it does not model.
         """
         try:
-            raw = self._native.chat_completion(json.dumps(request))
+            raw = self._native.chat_completion(json.dumps(dict(request)))
         except WarpLLMNativeError as e:
             raise_from_wire(str(e))
-        return json.loads(raw)
+        return cast("CreateChatCompletionResponse", json.loads(raw))
 
 
 class AsyncWarpLLM:
@@ -62,9 +71,13 @@ class AsyncWarpLLM:
     ) -> None:
         self._native = _native_client(base_url, timeout)
 
-    async def chat_completion(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def chat_completion(
+        self, request: Mapping[str, object]
+    ) -> CreateChatCompletionResponse:
         try:
-            raw = await self._native.async_chat_completion(json.dumps(request))
+            raw = await self._native.async_chat_completion(
+                json.dumps(dict(request))
+            )
         except WarpLLMNativeError as e:
             raise_from_wire(str(e))
-        return json.loads(raw)
+        return cast("CreateChatCompletionResponse", json.loads(raw))

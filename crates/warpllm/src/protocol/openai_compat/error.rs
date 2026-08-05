@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 /// callers program against, and a field here is one warpllm owes
 /// compatibility on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ErrorBody {
     pub message: String,
     /// The OpenAI error family, e.g. `invalid_request_error`, `server_error`.
@@ -34,15 +35,54 @@ pub struct ErrorBody {
     pub code: Option<String>,
 }
 
+/// Which language-level OpenAI-compatible exception to construct.
+///
+/// Rust decides this from the normalized status. Bindings only map this
+/// discriminant to their local class object; they do not interpret statuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "codegen", ts(rename_all = "snake_case"))]
+pub enum ErrorClass {
+    ApiConnection,
+    ApiStatus,
+    BadRequest,
+    Authentication,
+    PermissionDenied,
+    NotFound,
+    Conflict,
+    UnprocessableEntity,
+    RateLimit,
+    InternalServer,
+}
+
+impl ErrorClass {
+    pub fn from_status(status: Option<u16>) -> Self {
+        match status {
+            None => Self::ApiConnection,
+            Some(400) => Self::BadRequest,
+            Some(401) => Self::Authentication,
+            Some(403) => Self::PermissionDenied,
+            Some(404) => Self::NotFound,
+            Some(409) => Self::Conflict,
+            Some(422) => Self::UnprocessableEntity,
+            Some(429) => Self::RateLimit,
+            Some(500..) => Self::InternalServer,
+            Some(_) => Self::ApiStatus,
+        }
+    }
+}
+
 /// A failure rendered for an OpenAI-compatible surface: the body, plus what
 /// an SDK takes from the response instead of from inside it.
 ///
 /// One value, two renderings, which is the point of it existing — the HTTP
-/// gateway turns it into a status line and a JSON body, the FFI hands it to a
-/// binding that turns the status into an exception class. Neither can
-/// disagree with the other about what a failure is, because neither decides.
+/// gateway uses its status and body, while FFI bindings also use its selected
+/// exception class. No language binding interprets a status independently.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct OpenAiError {
+    pub class: ErrorClass,
     /// The status an OpenAI-compatible surface answers with.
     ///
     /// `None` means no HTTP exchange ever happened — warpllm never reached
@@ -54,4 +94,23 @@ pub struct OpenAiError {
     /// a binding hands them to the caller as `APIError.headers`.
     pub headers: BTreeMap<String, String>,
     pub error: ErrorBody,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_status_class_is_decided_in_rust() {
+        assert_eq!(ErrorClass::from_status(None), ErrorClass::ApiConnection);
+        assert_eq!(
+            ErrorClass::from_status(Some(401)),
+            ErrorClass::Authentication
+        );
+        assert_eq!(ErrorClass::from_status(Some(418)), ErrorClass::ApiStatus);
+        assert_eq!(
+            ErrorClass::from_status(Some(503)),
+            ErrorClass::InternalServer
+        );
+    }
 }

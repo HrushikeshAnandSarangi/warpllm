@@ -38,7 +38,7 @@ use serde_json::Value;
 use crate::error::Error;
 use crate::gateway::error::{Classified, ErrorMapper, classify};
 use crate::gateway::types::ProviderError;
-use crate::protocol::openai_compat::error::{ErrorBody, OpenAiError};
+use crate::protocol::openai_compat::error::{ErrorBody, ErrorClass, OpenAiError};
 
 /// OpenAI-compatible error bodies look like
 /// `{"error": {"message": ..., "type": ..., "code": ...}}`. Unparseable
@@ -278,12 +278,14 @@ pub(crate) fn to_openai(error: &Error) -> OpenAiError {
             headers.insert("x-request-id".to_string(), request_id.clone());
         }
     }
+    let status = match opinion.status {
+        OpinionStatus::Is(status) => Some(status),
+        OpinionStatus::NoResponse => None,
+        OpinionStatus::Upstream => upstream.map(|e| e.status),
+    };
     OpenAiError {
-        status: match opinion.status {
-            OpinionStatus::Is(status) => Some(status),
-            OpinionStatus::NoResponse => None,
-            OpinionStatus::Upstream => upstream.map(|e| e.status),
-        },
+        class: ErrorClass::from_status(status),
+        status,
         headers,
         error: ErrorBody {
             message: error.to_string(),

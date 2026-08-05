@@ -277,9 +277,9 @@ impl Error {
 
     /// [`to_openai`](Self::to_openai), serialized for the FFI boundary.
     ///
-    /// The JSON is the argument list the official SDKs build an error from —
-    /// status, headers, and the error object — so a binding reconstructs one
-    /// without interpreting anything.
+    /// The JSON contains the status, headers, OpenAI error object, and the
+    /// language-level error class already selected by Rust. A binding
+    /// reconstructs its local exception without interpreting the status.
     pub fn to_openai_json(&self) -> String {
         serde_json::to_string(&self.to_openai())
             .expect("an OpenAiError is plain data and always serializes")

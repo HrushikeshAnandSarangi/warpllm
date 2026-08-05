@@ -1,3 +1,5 @@
+import type { ErrorBody, ErrorClass, OpenAiError } from './generated/types.js'
+
 /**
  * The errors warpllm raises, matching the shape and the dispatch of the
  * official OpenAI SDK.
@@ -63,31 +65,6 @@ export class APIError extends Error {
     this.type = error?.type
     this.requestID = headers?.['x-request-id']
   }
-
-  /**
-   * Picks the class for a status, exactly as the OpenAI SDK's own factory
-   * does. Keyed on status alone — which is why `code` carries everything a
-   * status cannot say.
-   */
-  static generate(
-    status: number | undefined,
-    error: ErrorBody | undefined,
-    message: string | undefined,
-    headers: Record<string, string> | undefined,
-  ): APIError {
-    // No status means no response ever arrived.
-    if (status === undefined) return new APIConnectionError(status, error, message, headers)
-    const Class = BY_STATUS[status] ?? (status >= 500 ? InternalServerError : APIError)
-    return new Class(status, error, message, headers)
-  }
-}
-
-/** The `error` object, spelled as OpenAI spells it. */
-export interface ErrorBody {
-  message: string
-  type: string
-  param: string | null
-  code: string | null
 }
 
 /** warpllm never reached the provider, so there is no status and no body. */
@@ -117,37 +94,35 @@ type Constructor = new (
   headers: Record<string, string> | undefined,
 ) => APIError
 
-const BY_STATUS: Record<number, Constructor> = {
-  400: BadRequestError,
-  401: AuthenticationError,
-  403: PermissionDeniedError,
-  404: NotFoundError,
-  409: ConflictError,
-  422: UnprocessableEntityError,
-  429: RateLimitError,
-}
-
-/** What crosses the FFI — Rust's `Error::to_openai`. */
-interface Wire {
-  status?: number | null
-  headers?: Record<string, string>
-  error?: ErrorBody
+const BY_CLASS: Record<ErrorClass, Constructor> = {
+  api_connection: APIConnectionError,
+  api_status: APIError,
+  bad_request: BadRequestError,
+  authentication: AuthenticationError,
+  permission_denied: PermissionDeniedError,
+  not_found: NotFoundError,
+  conflict: ConflictError,
+  unprocessable_entity: UnprocessableEntityError,
+  rate_limit: RateLimitError,
+  internal_server: InternalServerError,
 }
 
 /**
  * Rebuilds the error from the native layer's JSON message.
  *
  * Nothing is interpreted here. Rust already decided what the failure is and
- * what OpenAI calls it; this only chooses the class the status implies.
+ * what OpenAI calls it; this only instantiates the class named by the wire
+ * discriminant.
  */
 export function throwFromWire(err: unknown): never {
   const raw = err instanceof Error ? err.message : String(err)
-  let wire: Wire
+  let wire: OpenAiError
   try {
-    wire = JSON.parse(raw) as Wire
+    wire = JSON.parse(raw) as OpenAiError
   } catch {
     // Not our JSON — surface it whole rather than inventing a shape for it.
     throw new APIError(undefined, undefined, raw, undefined)
   }
-  throw APIError.generate(wire.status ?? undefined, wire.error, wire.error?.message, wire.headers)
+  const Class = BY_CLASS[wire.class] ?? APIError
+  throw new Class(wire.status ?? undefined, wire.error, wire.error.message, wire.headers)
 }

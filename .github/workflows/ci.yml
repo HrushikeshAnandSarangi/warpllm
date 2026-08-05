@@ -73,6 +73,39 @@ jobs:
         working-directory: bindings/python
         run: uv run pytest
 
+  # The bindings' request and response types are generated from the Rust
+  # boundary DTOs and committed. Committed generated files rot silently: every
+  # other job here passes against a stale one, because a stale file is still
+  # valid TypeScript and valid Python. Regenerating and diffing is the only
+  # thing that catches a change to `protocol::openai_compat` that nobody
+  # propagated to the bindings.
+  codegen:
+    name: Generated types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.10"
+      - name: Install uv
+        run: python -m pip install uv==0.9.13
+      - name: Sync the locked environment
+        working-directory: bindings/python
+        run: uv sync --locked
+      - name: Regenerate language types from Rust
+        run: cargo run --locked -p warpllm-codegen
+      - name: Fail if any generated file is out of date
+        run: |
+          if ! git diff --exit-code || test -n "$(git status --porcelain)"; then
+            echo "::error::Generated types are stale. Run 'cargo run -p warpllm-codegen' and commit the result."
+            exit 1
+          fi
+
   node:
     name: Node bindings
     runs-on: ubuntu-latest
