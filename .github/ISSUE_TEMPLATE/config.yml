@@ -1,11 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Help with something that's already broken for you
-    url: https://discord.gg/payU7Vzuq5
-    about: Ask in #support. Faster than an issue when you're stuck on setup or usage.
-  - name: Discuss an idea or an engineering approach
-    url: https://discord.gg/payU7Vzuq5
-    about: Bring it to #dev before filing, if the shape isn't settled yet.
   - name: Contribution guide
     url: https://github.com/warpllm/warpllm/blob/main/CONTRIBUTING.md
     about: Project layout, dev setup, and how to add a provider or model.
