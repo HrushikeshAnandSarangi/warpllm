@@ -158,19 +158,6 @@ providers:
       openai/gpt-5.6-terra: {}
 
   # <https://openrouter.ai/docs/api-reference> (checked 2026-08-06).
-  #
-  # OpenRouter is an AGGREGATOR: it routes to many models across vendors, each
-  # identified by its own slug (`anthropic/claude-sonnet-4`, …). The roster's
-  # closed-key rule therefore applies per slug — there is no `openrouter/*`
-  # catch-all, and adding a model you want routable is an entry here, exactly
-  # as under any other provider.
-  #
-  # The key repeats the vendor prefix (`openrouter/anthropic/…`) and the
-  # `model:` field ships the FULL slug upstream: OpenRouter's own identifier is
-  # the two-segment `anthropic/claude-sonnet-4`, which the key's last-segment
-  # default would truncate. Each entry below is a CURATED pick from the
-  # catalog; entries exist to make these names routable, and no published
-  # limits are recorded for them yet.
   openrouter:
     base_url: "https://openrouter.ai/api/v1"
     env_api_key: OPENROUTER_API_KEY
@@ -178,10 +165,27 @@ providers:
     supported_apis:
       - chat_completions
     models:
+      # OpenRouter is an AGGREGATOR: it routes to many models across vendors,
+      # each identified by its own slug (`anthropic/claude-sonnet-4`, …). The
+      # roster's closed-key rule therefore applies per slug — there is no
+      # `openrouter/*` catch-all, and adding a model you want routable is an
+      # entry here, exactly as under any other provider.
+      #
+      # The key repeats the vendor prefix (`openrouter/anthropic/…`) and the
+      # `model:` field ships the FULL slug upstream: OpenRouter's own identifier
+      # is the two-segment `anthropic/claude-sonnet-4`, which the key's
+      # last-segment default would truncate. Each entry below is a CURATED pick
+      # from the catalog; entries exist to make these names routable, and no
+      # published limits are recorded for them yet.
+      #
+      # `openrouter/auto` is the exception that needs no `model:` field:
+      # OpenRouter's own alias for letting IT pick the model, so the wire name
+      # IS the key's last segment.
       openrouter/anthropic/claude-opus-4:
         model: anthropic/claude-opus-4
       openrouter/anthropic/claude-sonnet-4:
         model: anthropic/claude-sonnet-4
+      openrouter/auto: {}
       openrouter/deepseek/deepseek-v4-flash:
         model: deepseek/deepseek-v4-flash
       openrouter/google/gemini-2.5-pro:

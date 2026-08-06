@@ -208,6 +208,7 @@ mod tests {
                 "openai/gpt-5.6-terra",
                 "openrouter/anthropic/claude-opus-4",
                 "openrouter/anthropic/claude-sonnet-4",
+                "openrouter/auto",
                 "openrouter/deepseek/deepseek-v4-flash",
                 "openrouter/google/gemini-2.5-pro",
                 "openrouter/openai/gpt-5.6",
