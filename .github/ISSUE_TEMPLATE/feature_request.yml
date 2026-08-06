@@ -1,5 +1,5 @@
 name: Feature Request
-description: Propose a capability, provider, model, or protocol
+description: Propose a new idea — a capability, a provider or model, or anything else
 title: "[Feature]: "
 labels:
   - feature request
@@ -23,17 +23,17 @@ body:
         - Python or Node bindings
         - HTTP server (warpllm-server)
         - Docs / examples
-        - Something else
+        - Something else entirely
     validations:
       required: true
 
   - type: textarea
     id: problem
     attributes:
-      label: What's the problem, and what should warpllm do instead?
+      label: What's the idea, and what would it make possible?
       description: >
-        Lead with what you can't do today. Name the provider or model outright
-        if that's the ask.
+        What you can't do today, or something new you think warpllm should do.
+        Name the provider or model outright if that's the ask.
       placeholder: |
         warpllm can't route to Groq, so I keep a second client just for it.
         I want Groq models in the registry, reachable through the same client.
