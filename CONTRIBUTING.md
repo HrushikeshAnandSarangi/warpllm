@@ -12,7 +12,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 * Accept constructive criticism gracefully
 * Show empathy towards other community members
 
-Report any unacceptable behavior to us through our [Discord](https://discord.gg/tSSQTxFnsC).
+Report any unacceptable behavior to us through our [Discord](https://discord.gg/payU7Vzuq5).
 
 ## How to contribute
 
@@ -155,7 +155,7 @@ The common path (if the provider speaks a protocol warpllm already knows), in or
 
 * **To report bugs and feature requests**: [GitHub Issues](https://github.com/warpllm/warpllm/issues)
 * **To chat with the warpllm team (questions, ideas, reports)**:
-[Discord](https://discord.gg/tSSQTxFnsC)
+[Discord](https://discord.gg/payU7Vzuq5)
 * **To discuss amongst the community**: [Reddit](https://www.reddit.com/r/warpllm/)
 
 ### Getting Help
@@ -175,5 +175,5 @@ We value all contributions! Contributors are:
 
 If you have any questions, ask them away at any of these channels:
 
-[![Discord](https://img.shields.io/badge/Discord-warpllm-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/tSSQTxFnsC)
+[![Discord](https://img.shields.io/badge/Discord-warpllm-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/payU7Vzuq5)
 [![Reddit](https://img.shields.io/badge/Reddit-r%2Fwarpllm-FF4500?style=for-the-badge&logo=reddit&logoColor=white)](https://www.reddit.com/r/warpllm/)

@@ -83,7 +83,7 @@ Contributions on behalf of that employer, that Your employer has waived such
 rights for Your Contributions to the Project Owner, or that Your employer has
 executed a separate corporate agreement with the Project Owner. If Your employer
 owns rights in Your work and none of the above applies, please get in touch
-before contributing — via [Discord](https://discord.gg/tSSQTxFnsC) or
+before contributing — via [Discord](https://discord.gg/payU7Vzuq5) or
 [r/warpllm](https://www.reddit.com/r/warpllm/) — and we will arrange a corporate
 agreement.
 

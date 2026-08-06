@@ -2,7 +2,7 @@
 
 A warp-speed, robust AI gateway written for rust, node, and python applications - built for planet scale by the community.
 
-[![Discord](https://img.shields.io/badge/Discord-warpllm-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/tSSQTxFnsC)
+[![Discord](https://img.shields.io/badge/Discord-warpllm-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/payU7Vzuq5)
 [![Reddit](https://img.shields.io/badge/Reddit-r%2Fwarpllm-FF4500?style=for-the-badge&logo=reddit&logoColor=white)](https://www.reddit.com/r/warpllm/)
 
 [![crates.io](https://img.shields.io/crates/v/warpllm?logo=rust&label=crates.io)](https://crates.io/crates/warpllm)
