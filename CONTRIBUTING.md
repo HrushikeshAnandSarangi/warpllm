@@ -11,6 +11,8 @@ By participating in this project, you agree to maintain a respectful and inclusi
 * Focus on what's best for the community and project
 * Accept constructive criticism gracefully
 * Show empathy towards other community members
+* Leave your ego at the door — take help when you need it, and offer it when you
+  see someone asking
 
 Report any unacceptable behavior to us through our [Discord](https://discord.gg/payU7Vzuq5).
 
@@ -24,20 +26,42 @@ bindings compile it too. Add the others only for the package you're touching:
 * **Git** and **Rust + cargo** — always
 * **Python 3.10+ and uv** — only for `bindings/python`
 * **Node 22+ and npm** — only for `bindings/node`
+* **A signed [CLA](https://cla-assistant.io/warpllm/warpllm)** — we can't merge
+  your PR without it, so sign it before you start rather than at review time.
+  Full text in [CLA.md](CLA.md).
 
-Reading and signing the [warpllm Individual Contributor License Agreement](https://cla-assistant.io/warpllm/warpllm) is mandatory before submitting PRs. You can read the full text in [CLA.md](CLA.md). Expedite the process by signing it sooner.
+### Steps
 
-### Areas of contribution
+Every change starts as an issue, and one person owns it at a time.
 
-We welcome contributions in several areas:
-
-* **Model/provider integrations**: Improve the AI Gateway by maintaining or adding more models and providers. Usually an edit to `registry/specs.yaml` — see [Adding a provider or model](#adding-a-provider-or-model).
-* **Adding protocols**: Sometimes we see new protocols outside of the ones we support (erhm.. OpenAI-Compatible API). These live in `protocol/`, with conversions in `gateway/`.
-* **Documentation**: Improve guides, examples, and API docs
-* **Testing**: Increase test coverage always helps
-* **Examples**: Create demos and use cases on how to use warpllm
-* **Bug Fixes**: Fix reported issues
-* **Performance**: Simplify code, reduce latency, or reduce memory usage
+1.  **Pick something to work on.** We welcome contributions in several areas:
+    * **Model/provider integrations**: Improve the AI Gateway by maintaining or adding more models and providers. Usually an edit to `registry/specs.yaml` — see [Adding a provider or model](#adding-a-provider-or-model).
+    * **Adding protocols**: Sometimes we see new protocols outside of the ones we support (erhm.. OpenAI-Compatible API). These live in `protocol/`, with conversions in `gateway/`.
+    * **Documentation**: Improve guides, examples, and API docs
+    * **Testing**: Increase test coverage always helps
+    * **Examples**: Create demos and use cases on how to use warpllm
+    * **Bug Fixes**: Fix reported issues
+    * **Performance**: Simplify code, reduce latency, or reduce memory usage
+1.  **Search first.** Look through
+    [open and closed issues](https://github.com/warpllm/warpllm/issues?q=is%3Aissue)
+    before writing anything up. If it's a new feature idea and you want opinions
+    on the shape, raise it in `#dev` on
+    [Discord](https://discord.gg/payU7Vzuq5) first.
+1.  **File it** if it doesn't exist yet, using the
+    [issue templates](https://github.com/warpllm/warpllm/issues/new/choose).
+1.  **Claim it.** Comment **"working on this"** and a maintainer assigns you.
+    The assignment is the signal — don't start on an issue already assigned to
+    someone else. On your own feature request, ticking *I'd like to open the PR*
+    is the claim.
+1.  **Build it.** [Development Setup](#development-setup), then
+    [Before you open a PR](#before-you-open-a-pr) for the gate CI runs.
+1.  **Open the PR**, referencing the issue (`Fixes #123`).
+1.  **De-claim if you're stuck.** Two days past where you expected to be with no
+    path forward, or the issue is blocking other work? Post what you have and
+    where it broke, in the thread or `#dev`. Ask for help or hand it back —
+    both are fine, and neither is a failure. Silence is the only thing that
+    hurts. Claims with no comment and no PR for two weeks get reopened to
+    everyone.
 
 ## Project structure
 
