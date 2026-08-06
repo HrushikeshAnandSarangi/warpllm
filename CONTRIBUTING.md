@@ -158,11 +158,25 @@ The common path (if the provider speaks a protocol warpllm already knows), in or
 [Discord](https://discord.gg/payU7Vzuq5)
 * **To discuss amongst the community**: [Reddit](https://www.reddit.com/r/warpllm/)
 
+On [Discord](https://discord.gg/payU7Vzuq5), three channels carry most of the
+work:
+
+* **`#dev`** — feature ideas before they're issues, and how we should build the
+  ones that are. A new protocol, a change to the registry's rules, anything
+  where the approach is the hard part: raise it here first. A short thread often
+  saves a long PR review.
+* **`#support`** — you hit something that doesn't work and want help. Setup,
+  usage, a call that fails in a way you can't explain. File a
+  [bug report](https://github.com/warpllm/warpllm/issues/new/choose) once it
+  looks like a defect rather than a snag.
+* **`#intro`** — say hello. Tell us what you're building and what brought you
+  here; it's how we know who to point at which issue.
+
 ### Getting Help
 
 * Check existing documentation and examples
 * Search closed issues for similar problems
-* Ask on Discord for quick questions
+* Ask in `#support` on Discord for quick questions
 
 ### Recognition
 

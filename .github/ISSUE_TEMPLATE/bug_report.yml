@@ -1,0 +1,70 @@
+name: Bug Report
+description: Something in warpllm doesn't work the way it should
+title: "[Bug]: "
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Five fields, two minutes. Redact API keys and anything else you wouldn't
+        post publicly — logs from a real call often carry both.
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      description: Where you hit it. Pick `unsure` if you can't tell.
+      options:
+        - Rust crate (warpllm)
+        - Python (warpllm)
+        - Node (warpllm)
+        - HTTP server (warpllm-server)
+        - Docs / examples
+        - unsure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Package version, or the commit SHA if you built from source.
+      placeholder: 0.1.4
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened, and what did you expect instead?
+      placeholder: |
+        Routing to deepseek-chat returns UnknownModel.
+        I expected the call to reach DeepSeek, since the model is in specs.yaml.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Smallest way to reproduce it
+      description: >
+        Code, config, or commands we can run as-is. A snippet that fails beats a
+        description of one.
+      placeholder: |
+        from warpllm import Client
+        Client().chat.completions.create(model="deepseek-chat", messages=[...])
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Error output, logs, or anything else worth knowing
+      description: >
+        Optional. Include the provider and model if the bug is specific to one,
+        plus your OS and Rust version for build or runtime crashes.
+      render: text
+    validations:
+      required: false

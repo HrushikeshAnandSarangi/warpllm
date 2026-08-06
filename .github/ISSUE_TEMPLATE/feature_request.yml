@@ -1,0 +1,71 @@
+name: Feature Request
+description: Propose a capability, provider, model, or protocol
+title: "[Feature]: "
+labels:
+  - feature request
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Four fields, and the last two are optional. If you'd rather talk it
+        through first, `#dev` on [Discord](https://discord.gg/payU7Vzuq5) is the
+        right room — file here once the shape is clear.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: What kind of change is this?
+      options:
+        - New provider or model (registry entry)
+        - New protocol (a backend whose wire shape differs)
+        - SDK behavior or API surface
+        - Python or Node bindings
+        - HTTP server (warpllm-server)
+        - Docs / examples
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem, and what should warpllm do instead?
+      description: >
+        Lead with what you can't do today. Name the provider or model outright
+        if that's the ask.
+      placeholder: |
+        warpllm can't route to Groq, so I keep a second client just for it.
+        I want Groq models in the registry, reachable through the same client.
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: How would it look to use?
+      description: >
+        Optional. The call you want to write, the config key you want to set, or
+        the registry entry you'd add.
+      placeholder: |
+        Client().chat.completions.create(model="llama-3.3-70b-versatile", ...)
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Alternatives, links, or other context
+      description: >
+        Optional. Provider API docs are especially useful for a new provider or
+        protocol.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contributing
+    attributes:
+      label: Want to build it?
+      options:
+        - label: I'd like to open the PR for this.
+          required: false
