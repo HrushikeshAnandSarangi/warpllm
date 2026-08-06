@@ -193,7 +193,10 @@ mod tests {
         let yaml = include_str!("specs.yaml");
         lint::check(yaml).unwrap_or_else(|e| panic!("specs.yaml: {e}"));
         let registry = load::load(yaml).unwrap();
-        assert_eq!(providers(&registry), vec!["deepseek", "openai"]);
+        assert_eq!(
+            providers(&registry),
+            vec!["deepseek", "openai", "openrouter"]
+        );
         assert_eq!(
             keys(&registry),
             vec![
@@ -203,6 +206,11 @@ mod tests {
                 "openai/gpt-5.6-luna",
                 "openai/gpt-5.6-sol",
                 "openai/gpt-5.6-terra",
+                "openrouter/anthropic/claude-opus-4",
+                "openrouter/anthropic/claude-sonnet-4",
+                "openrouter/deepseek/deepseek-v4-flash",
+                "openrouter/google/gemini-2.5-pro",
+                "openrouter/openai/gpt-5.6",
             ]
         );
     }
@@ -223,6 +231,36 @@ mod tests {
         assert_eq!(provider.env_api_key(), Some("DEEPSEEK_API_KEY"));
         assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
         assert_eq!(model.model(), "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn resolves_openrouter() {
+        let (provider, model) = fetch_model("openrouter/anthropic/claude-sonnet-4").unwrap();
+        assert_eq!(provider.name(), "openrouter");
+        assert_eq!(provider.base_url(), "https://openrouter.ai/api/v1");
+        assert_eq!(provider.env_api_key(), Some("OPENROUTER_API_KEY"));
+        assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
+        assert!(provider.supports_api(Api::ChatCompletions));
+        assert!(!provider.supports_api(Api::Responses));
+        assert_eq!(model.model(), "anthropic/claude-sonnet-4");
+    }
+
+    /// OpenRouter's slugs are two segments (`anthropic/claude-sonnet-4`), and
+    /// the key's last-segment default would truncate one to `claude-sonnet-4`.
+    /// The `model:` field is what ships the FULL slug, so a key under
+    /// `openrouter/` has to prove it carries an explicit model.
+    #[test]
+    fn every_openrouter_entry_ships_its_full_slug_upstream() {
+        for (key, spec) in &REGISTRY.models {
+            if let Some(slug) = key.strip_prefix("openrouter/") {
+                assert_eq!(
+                    spec.model(),
+                    slug,
+                    "`{key}` shipped a truncated slug; the model field must carry \
+                     the whole two-segment OpenRouter identifier"
+                );
+            }
+        }
     }
 
     /// The whole GPT-5.6 family is routable and answered by one provider row;

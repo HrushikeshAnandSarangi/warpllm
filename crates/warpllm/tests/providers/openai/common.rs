@@ -11,6 +11,7 @@ use wiremock::MockServer;
 /// the expected bearer token.
 pub const OPENAI_KEY: &str = "sk-test-openai";
 pub const DEEPSEEK_KEY: &str = "sk-test-deepseek";
+pub const OPENROUTER_KEY: &str = "sk-test-openrouter";
 
 /// Client with the base URL pointed at the mock server. It carries no key —
 /// the client reads one from the environment at request time — so every test
@@ -48,6 +49,10 @@ pub fn with_openai_key<F: Future<Output = ()>>(body: F) {
 
 pub fn with_deepseek_key<F: Future<Output = ()>>(body: F) {
     with_env_key("DEEPSEEK_API_KEY", DEEPSEEK_KEY, body);
+}
+
+pub fn with_openrouter_key<F: Future<Output = ()>>(body: F) {
+    with_env_key("OPENROUTER_API_KEY", OPENROUTER_KEY, body);
 }
 
 pub fn request(model: &str) -> CreateChatCompletionRequest {
