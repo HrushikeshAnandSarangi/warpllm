@@ -156,3 +156,74 @@ providers:
       openai/gpt-5.6-luna: {}
       openai/gpt-5.6-sol: {}
       openai/gpt-5.6-terra: {}
+
+  # <https://openrouter.ai/docs/api-reference> (checked 2026-08-06).
+  openrouter:
+    base_url: "https://openrouter.ai/api/v1"
+    env_api_key: OPENROUTER_API_KEY
+    protocol: openai_compat
+    supported_apis:
+      - chat_completions
+    models:
+      # OpenRouter is an AGGREGATOR: it routes to many models across vendors,
+      # each identified by its own slug (`anthropic/claude-sonnet-4`, …). The
+      # roster's closed-key rule therefore applies per slug — there is no
+      # `openrouter/*` catch-all, and adding a model you want routable is an
+      # entry here, exactly as under any other provider.
+      #
+      # The key repeats the vendor prefix (`openrouter/anthropic/…`) and the
+      # `model:` field ships the FULL slug upstream: OpenRouter's own identifier
+      # is the two-segment `anthropic/claude-sonnet-4`, which the key's
+      # last-segment default would truncate. Each entry below is a CURATED pick
+      # from the catalog, with the limits OpenRouter itself publishes on each
+      # model's page: what OpenRouter serves IS the vendor's model, so the
+      # input figure is OpenRouter's context window and the output figure its
+      # max generation. `max_concurrent_requests` is recorded for none of them —
+      # OpenRouter publishes no concurrency ceiling per slug, only per-key rate
+      # limits on the caller's own account.
+      #
+      # `openrouter/auto` is the exception that needs no `model:` field and can
+      # carry no limits: OpenRouter's own alias for letting IT pick the model
+      # for each request, so the wire name IS the key's last segment and both
+      # limits are the backend's, chosen per call.
+      #
+      # OpenRouter (checked 2026-08-07): 200K context, 32K max output.
+      # <https://openrouter.ai/anthropic/claude-opus-4>
+      openrouter/anthropic/claude-opus-4:
+        model: anthropic/claude-opus-4
+        capabilities:
+          max_input_tokens: 200000
+          max_output_tokens: 32000
+      # OpenRouter (checked 2026-08-07): 1M context, 64K max output.
+      # <https://openrouter.ai/anthropic/claude-sonnet-4>
+      openrouter/anthropic/claude-sonnet-4:
+        model: anthropic/claude-sonnet-4
+        capabilities:
+          max_input_tokens: 1000000
+          max_output_tokens: 64000
+      openrouter/auto: {}
+      # OpenRouter (checked 2026-08-07): 1M context, 65,536 max output.
+      # <https://openrouter.ai/google/gemini-2.5-pro>
+      openrouter/google/gemini-2.5-pro:
+        model: google/gemini-2.5-pro
+        capabilities:
+          max_input_tokens: 1048576
+          max_output_tokens: 65536
+      # OpenRouter (checked 2026-08-07): `gpt-5.6` is OpenAI's alias that
+      # routes to `gpt-5.6-sol`, so the limits are Sol's as OpenRouter lists
+      # them: 1M context, 128K max output.
+      # <https://openrouter.ai/openai/gpt-5.6-sol>
+      openrouter/openai/gpt-5.6:
+        model: openai/gpt-5.6
+        capabilities:
+          max_input_tokens: 1050000
+          max_output_tokens: 128000
+      # OpenRouter (checked 2026-08-07): the `~deepseek/…-latest` alias, which
+      # always redirects to the newest DeepSeek V4 Flash revision: 1M context,
+      # 64K max output.
+      # <https://openrouter.ai/~deepseek/deepseek-v4-flash-latest>
+      openrouter/~deepseek/deepseek-v4-flash-latest:
+        model: ~deepseek/deepseek-v4-flash-latest
+        capabilities:
+          max_input_tokens: 1000000
+          max_output_tokens: 65536
