@@ -1863,6 +1863,8 @@ dependencies = [
  "temp-env",
  "thiserror",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "ts-rs",
  "wiremock",
  "yaml_serde",

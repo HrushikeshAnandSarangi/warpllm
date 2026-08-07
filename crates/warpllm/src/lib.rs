@@ -2,6 +2,7 @@
 
 mod client;
 mod config;
+mod credentials;
 mod error;
 mod gateway;
 mod http;
@@ -22,7 +23,7 @@ pub use gateway::types::ProviderError;
 pub use json_client::JsonClient;
 /// Everything a caller must NAME to make a call and hold its result: the
 /// request, the message it is built from, and the response handed back by
-/// [`Client::chat_completion`].
+/// [`Client::chat_completions`].
 ///
 /// That is the whole rule, and it is why the response's insides are absent.
 /// Reading `completion.choices[0].message.content` names none of them — field

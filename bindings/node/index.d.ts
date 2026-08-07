@@ -2,7 +2,7 @@
 /* eslint-disable */
 export declare class Client {
   constructor(configJson: string)
-  chatCompletion(requestJson: string): Promise<string>
+  chatCompletions(requestJson: string): Promise<string>
 }
 
 export declare function version(): string

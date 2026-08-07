@@ -27,7 +27,7 @@ fn openrouter_key_resolves_per_provider() {
             })
             .unwrap();
             client
-                .chat_completion(request("openrouter/anthropic/claude-sonnet-4"))
+                .chat_completions(request("openrouter/anthropic/claude-sonnet-4"))
                 .await
                 .unwrap();
 
@@ -48,7 +48,7 @@ fn openrouter_key_resolves_per_provider() {
                 //    key errors at request time, naming OpenRouter's env var.
                 let client = Client::new(ClientConfig::default()).unwrap();
                 let err = client
-                    .chat_completion(request("openrouter/anthropic/claude-sonnet-4"))
+                    .chat_completions(request("openrouter/anthropic/claude-sonnet-4"))
                     .await
                     .unwrap_err();
                 match err {

@@ -6,7 +6,7 @@ test('Rust chooses the JavaScript exception class', async () => {
   const client = new WarpLLM()
 
   const error = await client
-    .chatCompletion({ model: 'not-a-routable-model', messages: [] })
+    .chatCompletions({ model: 'not-a-routable-model', messages: [] })
     .catch((caught: unknown) => caught)
 
   expect(error).toBeInstanceOf(BadRequestError)

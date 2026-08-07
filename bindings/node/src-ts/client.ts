@@ -32,7 +32,7 @@ export class WarpLLM {
   }
 
   /**
-   * One method, mirroring Rust's `client.chat_completion(request)`.
+   * One method, mirroring Rust's `client.chat_completions(request)`.
    *
    * The request crosses verbatim — its fields are Rust's, so nothing here
    * renames them and nothing here has to learn a field warpllm gains.
@@ -45,12 +45,12 @@ export class WarpLLM {
    * package unassignable here, since TypeScript gives interfaces no implicit
    * one.
    */
-  async chatCompletion<T extends CreateChatCompletionRequest>(
+  async chatCompletions<T extends CreateChatCompletionRequest>(
     request: T,
   ): Promise<CreateChatCompletionResponse> {
     let raw: string
     try {
-      raw = await this.native.chatCompletion(JSON.stringify(request))
+      raw = await this.native.chatCompletions(JSON.stringify(request))
     } catch (err) {
       throwFromWire(err)
     }

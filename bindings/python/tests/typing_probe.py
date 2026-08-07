@@ -13,7 +13,7 @@ from warpllm import CreateChatCompletionRequest, WarpLLM
 
 
 def a_plain_dict_is_a_request(client: WarpLLM) -> None:
-    client.chat_completion(
+    client.chat_completions(
         {
             "model": "openai/gpt-5.6",
             "messages": [{"role": "user", "content": "hi"}],
@@ -26,7 +26,7 @@ def a_plain_dict_is_a_request(client: WarpLLM) -> None:
 def an_extension_parameter_is_accepted_at_the_boundary(
     client: WarpLLM,
 ) -> None:
-    client.chat_completion(
+    client.chat_completions(
         {
             "model": "openai/gpt-5.6",
             "messages": [{"role": "user", "content": "hi"}],
@@ -45,7 +45,7 @@ def the_generated_request_is_strict_when_requested() -> None:
 
 
 def the_response_is_typed(client: WarpLLM) -> None:
-    completion = client.chat_completion({"model": "m", "messages": []})
+    completion = client.chat_completions({"model": "m", "messages": []})
 
     # Reading the response needs no import and no cast...
     content: str | None = completion["choices"][0]["message"]["content"]
@@ -63,7 +63,7 @@ def a_nullable_field_stays_nullable(client: WarpLLM) -> None:
     It was `list[int]` here until the schema emitter started spelling nullables
     as `anyOf`; the annotation was flatly wrong and nothing said so.
     """
-    completion = client.chat_completion({"model": "m", "messages": []})
+    completion = client.chat_completions({"model": "m", "messages": []})
     logprobs = completion["choices"][0].get("logprobs")
     assert logprobs is not None
     content = logprobs.get("content")

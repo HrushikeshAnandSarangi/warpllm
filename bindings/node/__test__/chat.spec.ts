@@ -60,8 +60,8 @@ afterEach(async () => {
   await server.close()
 })
 
-const failure = async (req: Parameters<WarpLLM['chatCompletion']>[0]) => {
-  const err = await client.chatCompletion(req).catch((e: unknown) => e)
+const failure = async (req: Parameters<WarpLLM['chatCompletions']>[0]) => {
+  const err = await client.chatCompletions(req).catch((e: unknown) => e)
   expect(err).toBeInstanceOf(APIError)
   return err as APIError
 }
@@ -69,7 +69,7 @@ const failure = async (req: Parameters<WarpLLM['chatCompletion']>[0]) => {
 test('openai happy path', async () => {
   server.respondWith(200, OPENAI_COMPLETION)
 
-  const completion = await client.chatCompletion(request())
+  const completion = await client.chatCompletions(request())
 
   expect(completion.choices[0].message.content).toBe('Hello there!')
   expect(completion.choices[0].finish_reason).toBe('stop')
@@ -102,7 +102,7 @@ test('a request field the wrapper does not model still goes upstream', async () 
 
   // No cast: an unmodelled OpenAI parameter has to type-check, or the
   // wrapper does not accept an OpenAI-compatible request.
-  await client.chatCompletion({
+  await client.chatCompletions({
     model: 'openai/gpt-5.6',
     messages: MESSAGES,
     max_tokens: 64,
@@ -125,7 +125,7 @@ test('a request field the wrapper does not model still goes upstream', async () 
 test('a misspelled response field does not compile', async () => {
   server.respondWith(200, OPENAI_COMPLETION)
 
-  const completion = await client.chatCompletion(request())
+  const completion = await client.chatCompletions(request())
 
   // @ts-expect-error `choicez` is not a field on CreateChatCompletionResponse
   expect(completion.choicez).toBeUndefined()

@@ -14,8 +14,10 @@ pub const DEEPSEEK_KEY: &str = "sk-test-deepseek";
 pub const OPENROUTER_KEY: &str = "sk-test-openrouter";
 
 /// Client with the base URL pointed at the mock server. It carries no key —
-/// the client reads one from the environment at request time — so every test
-/// using this must run inside [`with_openai_key`] or [`with_deepseek_key`].
+/// the client reads the environment as it is BUILT, resolving every provider
+/// it can authenticate once — so every test using this must run inside
+/// [`with_openai_key`] or [`with_deepseek_key`], and must construct the client
+/// inside that closure rather than before it.
 pub fn client_for(server: &MockServer) -> Client {
     Client::new(ClientConfig {
         base_url: Some(server.uri()),

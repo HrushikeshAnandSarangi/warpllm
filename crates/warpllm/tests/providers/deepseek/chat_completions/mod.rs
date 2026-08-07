@@ -34,7 +34,7 @@ fn reasoning_content_survives_the_round_trip_to_the_caller() {
             .await;
 
         let completion = client_for(&server)
-            .chat_completion(request("deepseek/deepseek-v4-pro"))
+            .chat_completions(request("deepseek/deepseek-v4-pro"))
             .await
             .unwrap();
 
@@ -66,7 +66,7 @@ fn deepseek_happy_path() {
             .await;
 
         let completion = client_for(&server)
-            .chat_completion(request("deepseek/deepseek-v4-flash"))
+            .chat_completions(request("deepseek/deepseek-v4-flash"))
             .await
             .unwrap();
 
@@ -98,7 +98,7 @@ fn deepseek_forwards_params_for_the_provider_to_judge() {
         let mut req = request("deepseek/deepseek-v4-flash");
         req.temperature = Some(3.0);
         req.unknown_fields.insert("seed".into(), json!(7));
-        client_for(&server).chat_completion(req).await.unwrap();
+        client_for(&server).chat_completions(req).await.unwrap();
 
         let sent: serde_json::Value =
             serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
@@ -131,7 +131,7 @@ fn deepseek_logprobs_without_refusal_decodes() {
             .await;
 
         let completion = client_for(&server)
-            .chat_completion(request("deepseek/deepseek-v4-flash"))
+            .chat_completions(request("deepseek/deepseek-v4-flash"))
             .await
             .unwrap();
 
@@ -163,7 +163,7 @@ fn deepseek_errors_name_deepseek() {
             .await;
 
         let err = client_for(&server)
-            .chat_completion(request("deepseek/deepseek-v4-flash"))
+            .chat_completions(request("deepseek/deepseek-v4-flash"))
             .await
             .unwrap_err();
 

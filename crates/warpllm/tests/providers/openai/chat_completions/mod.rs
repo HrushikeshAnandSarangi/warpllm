@@ -17,7 +17,7 @@ fn openai_happy_path() {
             .await;
 
         let completion = client_for(&server)
-            .chat_completion(request("openai/gpt-5.6"))
+            .chat_completions(request("openai/gpt-5.6"))
             .await
             .unwrap();
 
@@ -79,7 +79,7 @@ fn unknown_request_fields_are_forwarded() {
         req.messages[0]
             .unknown_fields
             .insert("name".into(), json!("alice"));
-        client_for(&server).chat_completion(req).await.unwrap();
+        client_for(&server).chat_completions(req).await.unwrap();
 
         let sent: serde_json::Value =
             serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
@@ -122,7 +122,7 @@ fn openai_error_statuses_map_to_provider_error() {
                 .await;
 
             let err = client_for(&server)
-                .chat_completion(request("openai/gpt-5.6"))
+                .chat_completions(request("openai/gpt-5.6"))
                 .await
                 .unwrap_err();
 
@@ -149,7 +149,7 @@ fn malformed_success_body_maps_to_decode_error() {
             .await;
 
         let err = client_for(&server)
-            .chat_completion(request("openai/gpt-5.6"))
+            .chat_completions(request("openai/gpt-5.6"))
             .await
             .unwrap_err();
         assert!(
@@ -175,7 +175,7 @@ fn unparseable_error_body_falls_back_to_raw_text() {
             .await;
 
         let err = client_for(&server)
-            .chat_completion(request("openai/gpt-5.6"))
+            .chat_completions(request("openai/gpt-5.6"))
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Overloaded(_)), "{err:?}");
@@ -197,7 +197,7 @@ fn stream_true_is_rejected_before_any_request() {
         let mut req = request("openai/gpt-5.6");
         req.stream = Some(true);
 
-        let err = client_for(&server).chat_completion(req).await.unwrap_err();
+        let err = client_for(&server).chat_completions(req).await.unwrap_err();
         assert!(
             matches!(&err, Error::NotImplemented("streaming")),
             "{err:?}"
@@ -235,7 +235,7 @@ fn response_unknowns_and_tool_calls_round_trip_to_caller() {
             .await;
 
         let completion = client_for(&server)
-            .chat_completion(request("openai/gpt-5.6"))
+            .chat_completions(request("openai/gpt-5.6"))
             .await
             .unwrap();
 
@@ -260,7 +260,7 @@ fn invalid_model_strings_are_rejected() {
         let client = client_for(&server);
 
         let err = client
-            .chat_completion(request("gpt-5.6"))
+            .chat_completions(request("gpt-5.6"))
             .await
             .unwrap_err();
         assert!(
@@ -269,7 +269,7 @@ fn invalid_model_strings_are_rejected() {
         );
 
         let err = client
-            .chat_completion(request("mistral/large"))
+            .chat_completions(request("mistral/large"))
             .await
             .unwrap_err();
         assert!(

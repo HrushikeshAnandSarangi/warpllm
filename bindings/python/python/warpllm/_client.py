@@ -37,10 +37,10 @@ class WarpLLM:
     ) -> None:
         self._native = _native_client(base_url, timeout)
 
-    def chat_completion(
+    def chat_completions(
         self, request: Mapping[str, object]
     ) -> CreateChatCompletionResponse:
-        """One method, mirroring Rust's `client.chat_completion(request)`.
+        """One method, mirroring Rust's `client.chat_completions(request)`.
 
         The request crosses verbatim -- its fields are Rust's, so nothing
         here renames them and nothing here has to learn a field warpllm
@@ -54,14 +54,14 @@ class WarpLLM:
         Rust deliberately forwards fields it does not model.
         """
         try:
-            raw = self._native.chat_completion(json.dumps(dict(request)))
+            raw = self._native.chat_completions(json.dumps(dict(request)))
         except WarpLLMNativeError as e:
             raise_from_wire(str(e))
         return cast("CreateChatCompletionResponse", json.loads(raw))
 
 
 class AsyncWarpLLM:
-    """Async client; `await client.chat_completion(...)`."""
+    """Async client; `await client.chat_completions(...)`."""
 
     def __init__(
         self,
@@ -71,11 +71,11 @@ class AsyncWarpLLM:
     ) -> None:
         self._native = _native_client(base_url, timeout)
 
-    async def chat_completion(
+    async def chat_completions(
         self, request: Mapping[str, object]
     ) -> CreateChatCompletionResponse:
         try:
-            raw = await self._native.async_chat_completion(
+            raw = await self._native.async_chat_completions(
                 json.dumps(dict(request))
             )
         except WarpLLMNativeError as e:

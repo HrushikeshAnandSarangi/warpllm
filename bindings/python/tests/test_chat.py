@@ -25,7 +25,7 @@ def test_sync_openai_happy_path(
         headers={"Authorization": "Bearer sk-test-openai"},
     ).respond_with_json(openai_completion_body)
 
-    completion = client.chat_completion(request())
+    completion = client.chat_completions(request())
 
     assert completion["choices"][0]["message"]["content"] == "Hello there!"
     assert completion["choices"][0]["finish_reason"] == "stop"
@@ -56,7 +56,7 @@ async def test_async_openai_happy_path(
         headers={"Authorization": "Bearer sk-test-openai"},
     ).respond_with_json(openai_completion_body)
 
-    completion = await async_client.chat_completion(request())
+    completion = await async_client.chat_completions(request())
 
     assert completion["choices"][0]["message"]["content"] == "Hello there!"
     assert completion["model"] == "openai/gpt-5.6"
@@ -80,7 +80,7 @@ def test_the_response_is_not_narrowed_on_the_way_through(
         openai_completion_body
     )
 
-    completion = client.chat_completion(request())
+    completion = client.chat_completions(request())
 
     assert completion["some_field_python_never_heard_of"] == {"nested": [1]}
 
@@ -92,7 +92,7 @@ def test_an_unmodeled_request_field_reaches_rust_and_the_provider(
         openai_completion_body
     )
 
-    client.chat_completion(request(seed=7, future_parameter={"enabled": True}))
+    client.chat_completions(request(seed=7, future_parameter={"enabled": True}))
 
     sent = httpserver.log[0][0].get_json()
     assert sent["seed"] == 7
@@ -112,7 +112,7 @@ def test_401_reports_authentication(client: WarpLLM, httpserver: HTTPServer):
     )
 
     with pytest.raises(AuthenticationError) as exc_info:
-        client.chat_completion(request())
+        client.chat_completions(request())
     # Every failure is an APIError, so one `except` catches the lot.
     assert isinstance(exc_info.value, APIError)
     assert exc_info.value.status_code == 401
@@ -146,7 +146,7 @@ def test_quota_exhaustion_is_not_reported_as_a_rate_limit(
     # OpenAI reports both under one class, so the class cannot tell them
     # apart and `code` is the only thing that can.
     with pytest.raises(RateLimitError) as exc_info:
-        client.chat_completion(request())
+        client.chat_completions(request())
     error = exc_info.value
     assert error.code == "insufficient_quota"
     assert (
@@ -172,7 +172,7 @@ def test_rate_limit_carries_the_providers_request_id(
     )
 
     with pytest.raises(RateLimitError) as exc_info:
-        client.chat_completion(request())
+        client.chat_completions(request())
     assert exc_info.value.type == "rate_limit_error"
     assert exc_info.value.request_id == "req-abc"
     assert exc_info.value.headers["retry-after"] == "30"
@@ -195,7 +195,7 @@ def test_context_overflow_is_classified(
     )
 
     with pytest.raises(BadRequestError) as exc_info:
-        client.chat_completion(request())
+        client.chat_completions(request())
     assert exc_info.value.code == "context_length_exceeded"
 
 
@@ -213,11 +213,11 @@ def test_code_separates_the_providers_rejection_from_warpllms(
     )
 
     with pytest.raises(BadRequestError) as upstream:
-        client.chat_completion(request())
+        client.chat_completions(request())
 
     # ...and warpllm's own rejection never left the process.
     with pytest.raises(BadRequestError) as local:
-        client.chat_completion(request(model="mistral/large"))
+        client.chat_completions(request(model="mistral/large"))
 
     assert upstream.value.type == local.value.type == "invalid_request_error"
     # The provider named no code, and warpllm does not invent one for it.
@@ -227,12 +227,12 @@ def test_code_separates_the_providers_rejection_from_warpllms(
 
 def test_unknown_provider_rejected(client: WarpLLM):
     with pytest.raises(BadRequestError, match="no registered model spec"):
-        client.chat_completion(request(model="mistral/large"))
+        client.chat_completions(request(model="mistral/large"))
 
 
 def test_bare_model_rejected(client: WarpLLM):
     with pytest.raises(BadRequestError, match="no registered model spec"):
-        client.chat_completion(request(model="gpt-5.6"))
+        client.chat_completions(request(model="gpt-5.6"))
 
 
 def test_missing_key_names_env_var(monkeypatch):
@@ -241,11 +241,11 @@ def test_missing_key_names_env_var(monkeypatch):
     with pytest.raises(
         AuthenticationError, match="OPENAI_API_KEY"
     ) as exc_info:
-        client.chat_completion(request())
+        client.chat_completions(request())
     assert exc_info.value.code == "invalid_api_key"
 
 
 def test_stream_reports_not_implemented(client: WarpLLM):
     with pytest.raises(InternalServerError, match="streaming") as exc_info:
-        client.chat_completion(request(stream=True))
+        client.chat_completions(request(stream=True))
     assert exc_info.value.code == "not_implemented"

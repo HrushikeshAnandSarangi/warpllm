@@ -89,6 +89,11 @@ bindings/python/         PyO3 + maturin. Rust glue in src/, the importable
 bindings/node/           napi-rs. Rust glue in src/, TypeScript in src-ts/,
                          tests in __test__/.
   src-ts/generated/      Generated. Do not edit.
+examples/                One quickstart per language, side by side.
+                         crates/warpllm/examples/quickstart.rs is a SYMLINK to
+                         the file here — cargo only finds examples under the
+                         package root, and the three should not drift apart.
+                         Edit the real file; do not replace the link with a copy.
 ```
 
 The three ideas worth knowing before you read the code:

@@ -149,6 +149,8 @@ providers:
       - chat_completions
       - responses
     models:
+      # Sorts before the 5.6 family because `-` (0x2D) precedes `.` (0x2E).
+      openai/gpt-5-nano: {}
       # The GPT-5.6 family. No published limits are recorded for it yet: these
       # entries exist to make the four names routable. Add token limits and
       # concurrency here once the numbers are in hand.

@@ -19,6 +19,6 @@ test('package.json version matches the workspace Cargo.toml', () => {
 })
 
 // The async runtime bridge used to be covered here, through `echo`. It is now
-// covered by `chat.spec.ts`, which awaits a real `chatCompletion` against a
+// covered by `chat.spec.ts`, which awaits a real `chatCompletions` against a
 // mock server — the same suspension point, exercised by the call that matters
 // rather than by a placeholder that shipped in the published package.
