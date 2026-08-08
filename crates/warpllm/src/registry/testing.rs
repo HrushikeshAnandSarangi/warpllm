@@ -1,25 +1,25 @@
 //! Roster fixtures shared by the three modules' tests.
 //!
-//! Here rather than duplicated because the line numbers matter: [`PROVIDER`]
-//! is nine lines and ends on its `models:` key, so a case that appends model
-//! entries knows its first one lands on line 10 — which is what the sort
-//! check's error message is asserted against.
+//! Here rather than duplicated because the line numbers matter, and because
+//! `supported_apis` is required of every model: a case that only needs a
+//! routable name says [`model`] rather than spelling out three lines of
+//! surface it has no opinion about.
 
 use super::load::load;
 use super::types::Registry;
 
-/// One provider serving two APIs, with no models yet — the base most cases
-/// diverge from. Cases append their own model entries, already indented six
-/// spaces, so appended keys start at line 10.
+/// One provider with no models yet — the base most cases diverge from.
+///
+/// Six lines, ending on its `models:` key, so a case that appends entries
+/// knows its first key lands on line 7 — which is what the sort check's error
+/// message is asserted against. A [`model`] entry is three lines, so the
+/// second key lands on line 10.
 pub(super) const PROVIDER: &str = "\
 providers:
   demo:
     base_url: \"https://api.demo.test/v1\"
     env_api_key: DEMO_API_KEY
     protocol: openai_compat
-    supported_apis:
-      - chat_completions
-      - responses
     models:
 ";
 
@@ -34,11 +34,33 @@ pub(super) const OTHER_PROVIDER: &str = "  other:
     base_url: \"https://api.other.test\"
     env_api_key: OTHER_API_KEY
     protocol: openai_compat
-    supported_apis:
-      - chat_completions
     models:
-      other/plain: {}
+      other/plain:
+        supported_apis:
+          - {api: openai_chat_completions}
 ";
+
+/// The one line every model entry must carry, indented to sit under a key at
+/// six spaces.
+///
+/// `supported_apis` is required and inherits nothing, so there is no such
+/// thing as a bare `demo/plain: {}` any more. Cases that have no opinion about
+/// surfaces say so through [`model`] rather than repeating this.
+pub(super) const CHAT: &str =
+    "        supported_apis:\n          - {api: openai_chat_completions}\n";
+
+/// The minimal valid entry for `key`: it serves chat completions and says
+/// nothing else.
+pub(super) fn model(key: &str) -> String {
+    format!("      {key}:\n{CHAT}")
+}
+
+/// The minimal valid entries for several keys, in the order given — which is
+/// the order they will appear in the file, so a case testing the sort check
+/// can hand them over deliberately unsorted.
+pub(super) fn models(keys: &[&str]) -> String {
+    keys.iter().map(|key| model(key)).collect()
+}
 
 pub(super) fn with(models: &str) -> String {
     format!("{PROVIDER}{models}")

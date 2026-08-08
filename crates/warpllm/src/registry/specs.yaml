@@ -1,230 +1,176 @@
-# warpllm's model registry.
+# warpllm's model registry: every provider and model warpllm can route to.
 #
-# THIS FILE IS THE ROSTER. Adding a provider or a model is an edit here and
-# nowhere else: `mod.rs` next door compiles it into the binary with
-# `include_str!` and resolves it once, on the first lookup.
+# This file is the whole roster — adding, changing, or removing an entry is an
+# edit here and nowhere else. Run `cargo test -p warpllm` before opening a PR;
+# a malformed or untidy roster fails there, and CI runs the same suite.
 #
-# Two gates catch a bad edit, and `cargo test -p warpllm` is where both bite,
-# so run it before you open a PR. Anything that leaves no usable spec — a
-# syntax error, an unknown field, a malformed key, a missing required field —
-# fails to LOAD. Everything else about a good roster, listed below as a rule,
-# is a lint. Neither can reach a release: CI runs the suite on every PR.
-#
-# Two levels, and they stay separate
-# ----------------------------------
-# A PROVIDER is how an API is reached and what it serves: one host, one
-# credential, one wire format, one list of API surfaces. A MODEL is one name
-# routable under that provider, and carries ONLY what differs between models
-# of the same provider — its limits.
-#
+# Shape
+# -----
 #   providers:
-#     openai:                        transport and surface, stated once
-#       base_url: ...
+#     openai:                                 # how the API is reached
+#       base_url: "https://api.openai.com/v1"
+#       env_api_key: OPENAI_API_KEY
+#       protocol: openai_compat
 #       models:
-#         openai/gpt-5.6: {}         one routable name
+#         openai/gpt-5.6:                     # what is routable, and what it does
+#           supported_apis:
+#             - {api: openai_chat_completions}
+#           model: gpt-5.6-2026-01-01         # optional
+#           capabilities:                     # optional
+#             max_input_tokens: 400000
 #
-# Two registries, because they answer two questions, and nothing merges them
-# at lookup time: `fetch_model` hands back the provider row and the model row,
-# side by side. Every field belongs to exactly one level, so which level a
-# value came from is never in question.
-#
-# KEEP BOTH MAPS IN ASCENDING KEY ORDER — providers alphabetically, and each
-# provider's models alphabetically within it. The tests fail otherwise. A new
-# entry then has exactly one place it can go, and two PRs adding different
-# providers do not collide.
-#
-# Model keys
-# ----------
-# A model key is the string a caller routes with, provider prefix included,
-# and it MUST start with the provider it sits under: `openai/gpt-5.6` under
-# `openai:`. The repetition is the point — the key is greppable as the exact
-# string a request carries — and a key filed under the wrong provider fails to
-# load.
-#
-# What follows the prefix is the model NAME. It may contain further slashes
-# (`openai/org/custom-model`); those are part of the name and group nothing.
-# There is no nesting and no inheritance between models: a model's limits are
-# its own, and everything else comes from its provider.
-#
-# Unlisted models
-# ---------------
-# A model with no entry is an error, NOT a silent fallback — a typo must not
-# reach a provider as a live request. Every name warpllm routes to is listed
-# here, so what this file says is routable is exactly what is.
-#
-# There is no catch-all and no pattern. A key is read literally, character for
-# character, so `openai/*` is not a wildcard — it registers a model whose name
-# is `*`, which no caller routes to and no provider serves. Write the name you
-# mean; a `*` anywhere in a key is a mistake nothing here will catch for you.
-#
-# That is a deliberate trade, and it costs something. A model a provider
-# shipped this morning is not routable until an entry for it lands here and a
-# release goes out. The alternative — matching whatever the caller asked for —
-# turns `openai/gpt-4oo` into a live, billed request that fails upstream, and
-# moves the error from this file to production. A name warpllm has never heard
-# of failing HERE, before a request is sent, is the point of the roster.
+# A provider is a host; a model is a routable name under it. Nothing is
+# inherited — not between the two levels, and not between models.
 #
 # Provider fields
 # ---------------
-# - `base_url` includes any version prefix (e.g. `/v1`) and carries no
-#   trailing slash: endpoints append their own path (`/chat/completions`).
-# - `env_api_key` names the environment variable warpllm reads the API key from.
-#   It is the only source today and not a secret store; per-provider overrides
-#   in client configuration are a later addition, added when an embedder that
-#   keeps keys elsewhere turns up. Two providers may not share one — the tests
-#   reject it, because a shared variable silently authenticates one provider
-#   with the other's credentials.
-#
-#   OPTIONAL, and the only provider field that is. Omitting it means the
-#   provider cannot be authenticated at all: a request routed to one fails
-#   saying so instead of naming a variable nothing reads. That is allowed so an
-#   entry can land before its key plumbing does — it is not a way to opt into
-#   per-caller keys. An empty string is rejected — that is a half-finished edit,
-#   not an opt-out.
-# - `protocol` names the wire format spoken. One of: openai_compat.
-# - `supported_apis` names the API surfaces this provider serves. These are
-#   CAPABILITIES, not URL paths: which path an API is reached at belongs to the
-#   protocol that implements it, and two protocols may serve the same API at
-#   different paths. The vocabulary is closed, so a misspelling fails to LOAD
-#   rather than 404 against a live provider:
-#
-#     chat_completions
-#       One request, one whole reply. The only surface warpllm serves today.
-#
-#     chat_completions_stream
-#       The same request asked to stream, delivered as incremental chunks.
-#       Listed separately because a provider can serve one without the other —
-#       declaring `chat_completions` never implies this one, so a provider that
-#       streams has to say so.
-#
-#     responses
-#       OpenAI's newer, stateful successor to chat completions.
-#
-#   A provider may serve FEWER of these than its protocol defines, never one
-#   the protocol has never heard of; the tests reject that. It is one claim for
-#   the whole provider, and a model cannot narrow it: a name that serves a
-#   different surface needs a provider entry of its own.
+#   base_url      Required. Any version prefix included, no trailing slash.
+#   env_api_key   Optional. The environment variable holding the API key. Omit
+#                 it if the provider has no key plumbing yet — a request routed
+#                 there then fails saying exactly that.
+#   protocol      Required. The wire format spoken. One of: openai_compat.
+#   models        The models routable under this provider.
 #
 # Model fields
 # ------------
-# - `model` is the name sent upstream on the wire. Defaults to the key's last
-#   segment, so set it only when warpllm's routing alias differs from the
-#   provider's actual model name.
-# - `capabilities` carries the published per-model limits, each optional:
-#   `max_input_tokens`, `max_output_tokens`, `max_concurrent_requests`. A model
-#   with none of them recorded is `{}` — it exists to make that name routable.
-# - Omit a capability you have not verified. Undocumented is NOT unlimited, so
-#   leaving a limit off is the honest answer, never a guess.
-# - Cite your source. Every value below traces to a public spec — don't
-#   invent per-model data, and split a model out only once a real,
-#   documented difference is confirmed.
+#   supported_apis  Required. Every surface this model serves, each written
+#                   `- {api: <surface>}`. A model serves exactly what it lists.
+#   model           Optional. The name sent upstream. Defaults to the key's
+#                   last segment; set it when warpllm's alias differs from the
+#                   provider's own name.
+#   capabilities    Optional, and so is each limit in it: max_input_tokens,
+#                   max_output_tokens, max_concurrent_requests.
+#
+# Surfaces
+# --------
+# Only list a surface warpllm implements. One it doesn't would load fine and
+# then refuse the request.
+#
+#   openai_chat_completions         One request, one whole reply. IMPLEMENTED.
+#   openai_chat_completions_stream  The same, streamed. Not implemented yet.
+#   openai_responses                OpenAI's Responses API. Not implemented yet.
+#
+# Rules the tests enforce
+# -----------------------
+# - Both maps stay in ascending key order: providers, and models within each.
+# - A model key starts with the provider it sits under — `openai/gpt-5.6` under
+#   `openai:`. The rest is the model name, and may contain further slashes.
+# - Only listed models are routable, and there is no wildcard: `openai/*`
+#   registers a model literally named `*`. An unlisted name is an error, never
+#   a guess at what was meant.
+# - Two providers may not share an `env_api_key`.
+# - A surface must be one its provider's protocol speaks, and may not repeat.
+# - Cite the provider's docs in a comment for anything you record. Undocumented
+#   is not unlimited — omit a limit rather than guess it.
 
 providers:
   # <https://api-docs.deepseek.com/api/create-chat-completion> (checked
-  # 2026-07-24).
+  # 2026-07-24). The legacy `deepseek-chat` / `deepseek-reasoner` names were
+  # discontinued 2026-07-24 and map to V4-Flash modes.
   deepseek:
     base_url: "https://api.deepseek.com"
     env_api_key: DEEPSEEK_API_KEY
     protocol: openai_compat
-    supported_apis:
-      - chat_completions
     models:
-      # The V4 pair; the legacy `deepseek-chat` / `deepseek-reasoner` names were
-      # discontinued 2026-07-24 and map to V4-Flash modes. The pair diverges on
-      # exactly one field: Flash serves 5x what Pro does.
       deepseek/deepseek-v4-flash:
+        supported_apis:
+          - {api: openai_chat_completions}
         capabilities:
           max_concurrent_requests: 2500
       deepseek/deepseek-v4-pro:
+        supported_apis:
+          - {api: openai_chat_completions}
         capabilities:
           max_concurrent_requests: 500
 
-  # <https://platform.openai.com/docs/api-reference>. API entries grow
-  # as warpllm implements them.
+  # <https://platform.openai.com/docs/api-reference>. These models also serve
+  # the Responses API; it is left off until warpllm implements that surface.
   openai:
     base_url: "https://api.openai.com/v1"
     env_api_key: OPENAI_API_KEY
     protocol: openai_compat
-    supported_apis:
-      - chat_completions
-      - responses
     models:
       # Sorts before the 5.6 family because `-` (0x2D) precedes `.` (0x2E).
-      openai/gpt-5-nano: {}
-      # The GPT-5.6 family. No published limits are recorded for it yet: these
-      # entries exist to make the four names routable. Add token limits and
-      # concurrency here once the numbers are in hand.
-      openai/gpt-5.6: {}
-      openai/gpt-5.6-luna: {}
-      openai/gpt-5.6-sol: {}
-      openai/gpt-5.6-terra: {}
+      openai/gpt-5-nano:
+        supported_apis:
+          - {api: openai_chat_completions}
+      # The GPT-5.6 family. No published limits recorded yet — add them here
+      # once the numbers are in hand.
+      openai/gpt-5.6:
+        supported_apis:
+          - {api: openai_chat_completions}
+      openai/gpt-5.6-luna:
+        supported_apis:
+          - {api: openai_chat_completions}
+      openai/gpt-5.6-sol:
+        supported_apis:
+          - {api: openai_chat_completions}
+      openai/gpt-5.6-terra:
+        supported_apis:
+          - {api: openai_chat_completions}
 
   # <https://openrouter.ai/docs/api-reference> (checked 2026-08-06).
+  #
+  # An aggregator, so each entry below is a curated pick from its catalog and
+  # there is no `openrouter/*` catch-all. OpenRouter's own identifier is a
+  # two-segment slug, which the key's last-segment default would truncate, so
+  # every entry sets `model:` to the full slug. Limits come from each model's
+  # OpenRouter page; it publishes no per-slug concurrency ceiling, only
+  # per-key rate limits on the caller's account.
   openrouter:
     base_url: "https://openrouter.ai/api/v1"
     env_api_key: OPENROUTER_API_KEY
     protocol: openai_compat
-    supported_apis:
-      - chat_completions
     models:
-      # OpenRouter is an AGGREGATOR: it routes to many models across vendors,
-      # each identified by its own slug (`anthropic/claude-sonnet-4`, …). The
-      # roster's closed-key rule therefore applies per slug — there is no
-      # `openrouter/*` catch-all, and adding a model you want routable is an
-      # entry here, exactly as under any other provider.
-      #
-      # The key repeats the vendor prefix (`openrouter/anthropic/…`) and the
-      # `model:` field ships the FULL slug upstream: OpenRouter's own identifier
-      # is the two-segment `anthropic/claude-sonnet-4`, which the key's
-      # last-segment default would truncate. Each entry below is a CURATED pick
-      # from the catalog, with the limits OpenRouter itself publishes on each
-      # model's page: what OpenRouter serves IS the vendor's model, so the
-      # input figure is OpenRouter's context window and the output figure its
-      # max generation. `max_concurrent_requests` is recorded for none of them —
-      # OpenRouter publishes no concurrency ceiling per slug, only per-key rate
-      # limits on the caller's own account.
-      #
-      # `openrouter/auto` is the exception that needs no `model:` field and can
-      # carry no limits: OpenRouter's own alias for letting IT pick the model
-      # for each request, so the wire name IS the key's last segment and both
-      # limits are the backend's, chosen per call.
-      #
-      # OpenRouter (checked 2026-08-07): 200K context, 32K max output.
+      # Checked 2026-08-07: 200K context, 32K max output.
       # <https://openrouter.ai/anthropic/claude-opus-4>
       openrouter/anthropic/claude-opus-4:
+        supported_apis:
+          - {api: openai_chat_completions}
         model: anthropic/claude-opus-4
         capabilities:
           max_input_tokens: 200000
           max_output_tokens: 32000
-      # OpenRouter (checked 2026-08-07): 1M context, 64K max output.
+      # Checked 2026-08-07: 1M context, 64K max output.
       # <https://openrouter.ai/anthropic/claude-sonnet-4>
       openrouter/anthropic/claude-sonnet-4:
+        supported_apis:
+          - {api: openai_chat_completions}
         model: anthropic/claude-sonnet-4
         capabilities:
           max_input_tokens: 1000000
           max_output_tokens: 64000
-      openrouter/auto: {}
-      # OpenRouter (checked 2026-08-07): 1M context, 65,536 max output.
+      # OpenRouter's alias for letting IT pick the model per request: the wire
+      # name is the key's last segment, and the limits are whichever backend
+      # it chooses.
+      openrouter/auto:
+        supported_apis:
+          - {api: openai_chat_completions}
+      # Checked 2026-08-07: 1M context, 65,536 max output.
       # <https://openrouter.ai/google/gemini-2.5-pro>
       openrouter/google/gemini-2.5-pro:
+        supported_apis:
+          - {api: openai_chat_completions}
         model: google/gemini-2.5-pro
         capabilities:
           max_input_tokens: 1048576
           max_output_tokens: 65536
-      # OpenRouter (checked 2026-08-07): `gpt-5.6` is OpenAI's alias that
-      # routes to `gpt-5.6-sol`, so the limits are Sol's as OpenRouter lists
-      # them: 1M context, 128K max output.
+      # Checked 2026-08-07: `gpt-5.6` is OpenAI's alias for `gpt-5.6-sol`, so
+      # these are Sol's limits — 1M context, 128K max output.
       # <https://openrouter.ai/openai/gpt-5.6-sol>
       openrouter/openai/gpt-5.6:
+        supported_apis:
+          - {api: openai_chat_completions}
         model: openai/gpt-5.6
         capabilities:
           max_input_tokens: 1050000
           max_output_tokens: 128000
-      # OpenRouter (checked 2026-08-07): the `~deepseek/…-latest` alias, which
-      # always redirects to the newest DeepSeek V4 Flash revision: 1M context,
-      # 64K max output.
+      # Checked 2026-08-07: the `~deepseek/…-latest` alias, always the newest
+      # DeepSeek V4 Flash revision — 1M context, 64K max output.
       # <https://openrouter.ai/~deepseek/deepseek-v4-flash-latest>
       openrouter/~deepseek/deepseek-v4-flash-latest:
+        supported_apis:
+          - {api: openai_chat_completions}
         model: ~deepseek/deepseek-v4-flash-latest
         capabilities:
           max_input_tokens: 1000000

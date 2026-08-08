@@ -1,17 +1,27 @@
 //! The vocabulary three layers agree on: which wire format a provider speaks,
-//! and which API surfaces it serves.
+//! and which API surfaces a model serves.
 //!
 //! These live above both [`crate::protocol`] and [`crate::gateway`] rather than
 //! inside either, because both need them and neither owns them. [`Protocol`]
 //! names a protocol, keys the gateway `ext` bags, and is the word the registry
-//! YAML uses; [`Api`] names a surface and is the module path that implements it.
-//! Filing them under the protocol layer would make the canonical forms in
-//! `gateway::types` — which are supposed to be protocol-neutral — reach into the
-//! module tree that defines the protocols to name their own bag keys.
+//! YAML uses; [`Api`] names one protocol's surface and is the module path that
+//! implements it. Filing them under the protocol layer would make the canonical
+//! forms in `gateway::types` — which are supposed to be protocol-neutral — reach
+//! into the module tree that defines the protocols to name their own bag keys.
 //!
-//! Vocabulary, not data: the shapes that cross the wire are
-//! `protocol::<name>::<api>::types`, and their canonical counterparts are
-//! `gateway::types`. What is here is fieldless by nature — names, not payloads.
+//! # An [`Api`] names its protocol
+//!
+//! `openai_chat_completions`, not `chat_completions`. The surface alone is
+//! ambiguous the moment a second protocol serves something comparable: chat
+//! completions and Anthropic's messages are the same idea in two wire formats,
+//! and a model may well serve both. Qualifying the name is what lets one model
+//! list `openai_chat_completions` and `anthropic_messages` side by side without
+//! either the roster or this enum having to decide they are the same thing.
+//!
+//! [`Api`] itself is a bare name. What a roster records ABOUT a surface lives
+//! on [`crate::SupportedApi`], one struct holding every surface's fields — so a
+//! field like `input_modalities` is declared once and every surface has it,
+//! rather than being added to three payloads and kept in step by hand.
 
 /// How a provider's wire protocol is spoken. One variant per wire format,
 /// not per provider — the exhaustive `match` in `client.rs` stays small
@@ -50,64 +60,84 @@ impl Protocol {
             Protocol::OpenAiCompat => "openai_compat",
         }
     }
-
-    /// The APIs this wire format defines.
-    ///
-    /// A registry entry naming an API its protocol does not serve is a
-    /// protocol mismatch, which is what `registry::lint` reads this for.
-    /// Widening a protocol's surface is an edit here — not in the roster.
-    ///
-    /// While `OpenAiCompat` is the only protocol and serves every [`Api`],
-    /// that lint cannot fail; it earns its keep the moment a protocol lands
-    /// that serves a subset, which is why it is written now rather than
-    /// retrofitted then.
-    ///
-    /// `cfg(test)` because that lint is its only reader, and the lint itself
-    /// is test-only. Nothing on a request path consults this: a spec carries
-    /// its OWN api list, already checked against this one.
-    #[cfg(test)]
-    pub(crate) fn apis(self) -> &'static [Api] {
-        match self {
-            Protocol::OpenAiCompat => &[
-                Api::ChatCompletions,
-                Api::ChatCompletionsStream,
-                Api::Responses,
-            ],
-        }
-    }
 }
 
-/// One API surface a provider can serve, as named in a registry provider's
-/// `supported_apis`.
+/// One API surface a model can serve — the `api:` of an entry in a registry
+/// model's `supported_apis`.
 ///
-/// A capability, not a URL: two protocols can serve the same API at different
-/// paths, so the path belongs to the protocol module that implements it. Being
-/// an enum is what makes a misspelling fail to LOAD rather than 404 against a
-/// live provider at request time.
+/// A capability, not a URL: the path a surface is reached at belongs to the
+/// protocol module implementing it. Being an enum is what makes a misspelling
+/// fail to LOAD rather than 404 against a live provider at request time.
 ///
-/// The snake_case name is also the module name that implements the API, so
-/// `chat_completions` is reached at `protocol::openai_compat::chat_completions`
-/// and `gateway::openai_compat::api::chat_completions`, and the two cannot
-/// drift from the variant by a rename.
+/// A bare name, carrying nothing. What the roster records about a surface is
+/// [`crate::SupportedApi`]'s, so that a field belongs to every surface at once
+/// — see this module's own docs. The name is also the module path that
+/// implements it, so `openai_chat_completions` is reached at
+/// `protocol::openai_compat::chat_completions`, and the two cannot drift by a
+/// rename.
+///
+/// The renames are spelled out rather than derived for the same reason
+/// [`Protocol`]'s is: `rename_all = "snake_case"` reads the camel hump in
+/// `OpenAi` and would give `open_ai_chat_completions`. `api_names_match_serde`
+/// pins every one of them.
 ///
 /// `non_exhaustive` for the same reason as [`Protocol`]: this exists to grow
 /// as warpllm implements more of each provider's surface, and without it every
 /// downstream `match` would break on a release that adds one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 #[non_exhaustive]
-#[serde(rename_all = "snake_case")]
 pub enum Api {
-    /// Chat completions: one request, one whole reply. The only surface
-    /// warpllm serves today.
-    ChatCompletions,
-    /// Chat completions asked to stream, delivering the reply as incremental
-    /// chunks.
+    /// Chat completions as OpenAI-compatible providers speak them: one
+    /// request, one whole reply. The only surface warpllm serves today.
+    #[serde(rename = "openai_chat_completions")]
+    OpenAiChatCompletions,
+    /// The same request asked to stream, delivered as incremental chunks.
     ///
-    /// Separate from [`Api::ChatCompletions`] because a model can serve one
-    /// without the other, so declaring that one never implies this one.
-    ChatCompletionsStream,
+    /// Separate from [`Api::OpenAiChatCompletions`] because a model can serve
+    /// one without the other, so declaring that one never implies this one.
+    #[serde(rename = "openai_chat_completions_stream")]
+    OpenAiChatCompletionsStream,
     /// OpenAI's newer, stateful successor to chat completions.
-    Responses,
+    #[serde(rename = "openai_responses")]
+    OpenAiResponses,
+}
+
+impl Api {
+    /// This surface's name as a string: the spelling the registry YAML uses,
+    /// and the one an error names it by.
+    ///
+    /// One source of truth for that string, so a message cannot drift from the
+    /// roster line a reader would go and fix — `Debug` would say
+    /// `OpenAiChatCompletions`, which appears nowhere a contributor can act on.
+    /// `api_names_match_serde` pins it to the `serde(rename)` above, which
+    /// matters because both are hand-written.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Api::OpenAiChatCompletions => "openai_chat_completions",
+            Api::OpenAiChatCompletionsStream => "openai_chat_completions_stream",
+            Api::OpenAiResponses => "openai_responses",
+        }
+    }
+
+    /// The protocol this surface is spoken in — read off the variant, which
+    /// names it.
+    ///
+    /// The inverse of the list [`Protocol`] used to carry, and the better
+    /// direction: a surface belongs to exactly one protocol, while a protocol
+    /// serves many. `registry::lint` reads it to hold a model's surfaces
+    /// against the provider serving them.
+    ///
+    /// `cfg(test)` because that lint is its only reader and is itself
+    /// test-only. Nothing on a request path consults it — dispatch reads the
+    /// provider's own [`Protocol`].
+    #[cfg(test)]
+    pub(crate) fn protocol(self) -> Protocol {
+        match self {
+            Api::OpenAiChatCompletions
+            | Api::OpenAiChatCompletionsStream
+            | Api::OpenAiResponses => Protocol::OpenAiCompat,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -115,8 +145,53 @@ mod tests {
     use super::*;
 
     /// Every variant, for the checks below. A new protocol goes here — the
-    /// same standing obligation [`Protocol::apis`] carries.
+    /// same standing obligation [`Api::protocol`] carries in the other
+    /// direction.
     const ALL: &[Protocol] = &[Protocol::OpenAiCompat];
+
+    /// Every surface, so a new variant has one place to be added for the
+    /// checks below to cover it.
+    const EVERY_API: &[(&str, Api)] = &[
+        ("openai_chat_completions", Api::OpenAiChatCompletions),
+        (
+            "openai_chat_completions_stream",
+            Api::OpenAiChatCompletionsStream,
+        ),
+        ("openai_responses", Api::OpenAiResponses),
+    ];
+
+    /// The roster spells these by hand, and so do the `serde(rename)` on each
+    /// variant and [`Api::as_str`]. All three are the same string by contract,
+    /// so a rename that touches one and not the others has to fail here rather
+    /// than as an "unknown variant" against a contributor's perfectly good
+    /// roster line — or, worse, as an error message naming a surface that
+    /// appears nowhere in the file.
+    #[test]
+    fn api_names_match_serde() {
+        for &(name, expected) in EVERY_API {
+            let parsed: Api = serde_json::from_value(serde_json::json!(name))
+                .unwrap_or_else(|e| panic!("`api: {name}` is what the roster writes: {e}"));
+            assert_eq!(parsed, expected, "`{name}` deserialized to something else");
+            assert_eq!(parsed.as_str(), name, "`{name}` renders as something else");
+            // The variant names its own protocol, which is the whole reason
+            // the surface is spelled with a prefix.
+            assert_eq!(parsed.protocol(), Protocol::OpenAiCompat, "`{name}`");
+        }
+    }
+
+    /// A surface warpllm has never heard of fails to parse, which is what
+    /// keeps a misspelling out of the roster. The message names the whole
+    /// vocabulary so the line can be fixed without opening this file.
+    #[test]
+    fn an_unknown_surface_is_rejected() {
+        let err = serde_json::from_value::<Api>(serde_json::json!("anthropic_messages"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown variant"), "{err}");
+        for (known, _) in EVERY_API {
+            assert!(err.contains(known), "vocabulary missing {known}: {err}");
+        }
+    }
 
     /// [`Protocol::as_str`] keys the ext bags; the `serde(rename)` keys the
     /// registry YAML. They are the same string by contract, and hand-written

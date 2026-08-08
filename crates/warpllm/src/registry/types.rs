@@ -1,11 +1,17 @@
 //! What the registry holds, and how a caller reads it.
 //!
 //! Two levels, two types, because they answer two questions. A
-//! [`ProviderSpec`] is how an API is reached and what it serves — one host,
-//! one credential, one wire format, one list of surfaces. A [`ModelSpec`] is
-//! one routable name under that provider, carrying only what differs between
-//! models of the same one. [`crate::fetch_model`] hands back one of each and
-//! merges nothing.
+//! [`ProviderSpec`] is how an API is reached: one host, one credential, one
+//! wire format. A [`ModelSpec`] is one routable name under that provider,
+//! carrying what differs between models of the same one — its limits, and
+//! which API surfaces it serves. [`crate::fetch_model`] hands back one of each
+//! and merges nothing.
+//!
+//! `supported_apis` is the MODEL's, and only the model's. A provider is a
+//! host, not a capability: one host commonly serves chat completions,
+//! embeddings, and moderation from three disjoint sets of models, so a
+//! provider-level list could only ever be their union — true of the host and
+//! false of every model under it.
 //!
 //! These are READ SURFACES, not the YAML schema: `load` next door owns the
 //! schema and does the settling, which is why nothing here is an `Option`
@@ -39,19 +45,18 @@ pub(crate) struct Registry {
     pub(crate) models: HashMap<String, ModelSpec>,
 }
 
-/// One provider: where its API is, how to authenticate, what protocol it
-/// speaks, and which surfaces it serves.
+/// One provider: where its API is, how to authenticate, and what protocol it
+/// speaks.
 ///
-/// Everything here is true of every model the provider serves. What varies
-/// per model is in [`ModelSpec`], and the split is what keeps a provider's
-/// transport stated exactly once.
+/// Transport, and nothing else. Everything here is true of every model the
+/// provider serves, which is what keeps it stated exactly once — and it is why
+/// what a model can DO is not here.
 #[derive(Debug, Clone)]
 pub struct ProviderSpec {
     pub(crate) name: String,
     pub(crate) base_url: String,
     pub(crate) env_api_key: Option<String>,
     pub(crate) protocol: Protocol,
-    pub(crate) supported_apis: Vec<Api>,
 }
 
 impl ProviderSpec {
@@ -83,28 +88,14 @@ impl ProviderSpec {
     pub fn protocol(&self) -> Protocol {
         self.protocol
     }
-
-    /// The API surfaces this provider serves — never empty, since a provider
-    /// that served nothing could not be routed to and would fail to load.
-    pub fn supported_apis(&self) -> &[Api] {
-        &self.supported_apis
-    }
-
-    /// Whether this provider serves `api`.
-    ///
-    /// Each variant is its own claim: a provider declaring
-    /// [`Api::ChatCompletions`] has said nothing about
-    /// [`Api::ChatCompletionsStream`].
-    pub fn supports_api(&self, api: Api) -> bool {
-        self.supported_apis.contains(&api)
-    }
 }
 
-/// One routable model: the name it ships upstream, and its published limits.
+/// One routable model: the name it ships upstream, the surfaces it serves,
+/// and its published limits.
 ///
-/// Deliberately thin. Everything shared with the provider's other models
-/// lives in [`ProviderSpec`], so an entry here is only what makes this model
-/// different from its siblings — which for most models is nothing at all.
+/// Deliberately thin. The transport lives in [`ProviderSpec`], so an entry
+/// here is only what makes this model different from its siblings — which for
+/// most models is nothing at all.
 #[derive(Debug, Clone)]
 pub struct ModelSpec {
     /// The provider serving this model — the key its [`ProviderSpec`] is
@@ -114,6 +105,10 @@ pub struct ModelSpec {
     /// last segment, so it differs only when warpllm's routing alias differs
     /// from the provider's own model name.
     pub(crate) model: String,
+    /// Every surface this model serves, written out in the roster. Required
+    /// and never inherited: a model that says nothing serves nothing, which is
+    /// a load failure rather than a silent claim on everything its host does.
+    pub(crate) supported_apis: Vec<SupportedApi>,
     pub(crate) capabilities: Capabilities,
 }
 
@@ -128,9 +123,69 @@ impl ModelSpec {
         &self.model
     }
 
+    /// Every surface this model serves, with what the roster records about
+    /// each, in the order the file lists them. Never empty.
+    ///
+    /// Each names its protocol as well as its surface, so a model answering
+    /// the same idea in two wire formats lists both and nothing has to decide
+    /// they are the same thing.
+    pub fn supported_apis(&self) -> &[SupportedApi] {
+        &self.supported_apis
+    }
+
+    /// This model's entry for `api`, or `None` if it does not serve it. The
+    /// gate a request passes before it is routed anywhere.
+    ///
+    /// Hands back the ENTRY rather than a `bool` so that a caller asking
+    /// whether the model serves something already holds what the roster
+    /// records about serving it — the shape that survives
+    /// [`SupportedApi`] gaining fields.
+    ///
+    /// One method for every surface, rather than one method each: [`Api`]
+    /// carries no payload, so it can simply be passed in.
+    pub fn supported_api(&self, api: Api) -> Option<&SupportedApi> {
+        self.supported_apis.iter().find(|entry| entry.api == api)
+    }
+
+    /// Whether this model serves `api` at all.
+    pub fn supports_api(&self, api: Api) -> bool {
+        self.supported_api(api).is_some()
+    }
+
     /// What this model's published limits are.
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+}
+
+/// One entry in a model's `supported_apis`: a surface it serves, and what the
+/// roster records about serving it.
+///
+/// Written `- {api: openai_chat_completions}`. The surface is a field rather
+/// than the entry's own shape, and that is the whole design: a field added here
+/// belongs to EVERY surface at once. `input_modalities` recorded per-surface
+/// would otherwise mean three payload types to add it to and keep in step, with
+/// nothing to catch the one that was missed.
+///
+/// Carries only `api` today. An entry is therefore one key wide, which is why
+/// the roster writes it on one line.
+///
+/// A YAML schema in its own right, like [`Capabilities`] and for the same
+/// reason: it maps one-to-one onto what the file writes, with nothing to
+/// settle, so a second struct to deserialize into would be a copy to keep in
+/// step. `deny_unknown_fields` is what turns a contributor's `apis:` typo into
+/// an error rather than an entry that quietly names no surface.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct SupportedApi {
+    pub(crate) api: Api,
+}
+
+impl SupportedApi {
+    /// Which surface this entry is about.
+    pub fn api(&self) -> Api {
+        self.api
     }
 }
 

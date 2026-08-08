@@ -15,8 +15,8 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use super::types::{Capabilities, ModelSpec, ProviderSpec, Registry};
-use crate::types::{Api, Protocol};
+use super::types::{Capabilities, ModelSpec, ProviderSpec, Registry, SupportedApi};
+use crate::types::Protocol;
 
 /// The whole roster: providers, each holding the models routable under it.
 ///
@@ -41,7 +41,6 @@ struct ProviderEntry {
     base_url: String,
     env_api_key: Option<String>,
     protocol: Protocol,
-    supported_apis: Vec<Api>,
     /// `Option`, and defaulted, so that both ways of writing "no models yet" —
     /// omitting the key and leaving it empty — reach the lint, which says what
     /// is wrong with that in its own words. Neither is a load failure, because
@@ -50,12 +49,20 @@ struct ProviderEntry {
     models: Option<HashMap<String, ModelEntry>>,
 }
 
-/// One model as written: what it ships upstream if that differs from its key,
-/// and whatever limits are published for it. Both optional, which is why the
-/// overwhelmingly common entry is `{}`.
+/// One model as written: which surfaces it serves, what it ships upstream if
+/// that differs from its key, and whatever limits are published for it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModelEntry {
+    /// REQUIRED, and the reason a model entry is never bare `{}`.
+    ///
+    /// Nothing is inherited from the provider, deliberately. A default of
+    /// "everything my host serves" would be a claim the roster never made, and
+    /// it fails open: an embeddings model under a host that also serves chat
+    /// would be admitted to a chat request and fail as a 404 upstream. Silence
+    /// stops the roster loading instead, and serde names the entry it is
+    /// missing from.
+    supported_apis: Vec<SupportedApi>,
     model: Option<String>,
     /// Names `blank` rather than relying on `#[serde(default)]`, which would
     /// need `Capabilities: Default` — the public constructor that type does
@@ -75,7 +82,6 @@ pub(super) fn load(yaml: &str) -> Result<Registry, String> {
             base_url,
             env_api_key,
             protocol,
-            supported_apis,
             models,
         } = entry;
         for (key, model) in models.unwrap_or_default() {
@@ -89,7 +95,6 @@ pub(super) fn load(yaml: &str) -> Result<Registry, String> {
                 base_url,
                 env_api_key,
                 protocol,
-                supported_apis,
             },
         );
     }
@@ -107,8 +112,8 @@ fn parse(yaml: &str) -> Result<RegistryFile, String> {
     yaml_serde::from_str(yaml).map_err(|e| e.to_string())
 }
 
-/// One model entry, checked against the key it sits under. The key settles
-/// the one thing the entry itself may not state: the name that ships upstream.
+/// One model entry, checked against the key it sits under. The key settles the
+/// one thing the entry itself may leave unstated: the name that ships upstream.
 fn build(key: &str, provider: &str, entry: ModelEntry) -> Result<ModelSpec, String> {
     validate_model(key, provider)?;
     let name = key
@@ -118,6 +123,7 @@ fn build(key: &str, provider: &str, entry: ModelEntry) -> Result<ModelSpec, Stri
     Ok(ModelSpec {
         provider: provider.to_string(),
         model: entry.model.unwrap_or_else(|| name.to_string()),
+        supported_apis: entry.supported_apis,
         capabilities: entry.capabilities,
     })
 }
@@ -168,8 +174,11 @@ fn validate_model(key: &str, provider: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{OTHER_PROVIDER, PROVIDER, clean, keys, providers, with};
+    use super::super::testing::{
+        CHAT, OTHER_PROVIDER, PROVIDER, clean, keys, model, models, providers, with,
+    };
     use super::*;
+    use crate::types::Api;
 
     /// `PROVIDER` with one line dropped, for the cases that ask what happens
     /// when a required field is not there at all.
@@ -186,7 +195,7 @@ mod tests {
     /// other, and neither holds the other's rows.
     #[test]
     fn providers_and_models_land_in_their_own_tables() {
-        let registry = clean(&with("      demo/one: {}\n      demo/two: {}\n"));
+        let registry = clean(&with(&models(&["demo/one", "demo/two"])));
         assert_eq!(providers(&registry), vec!["demo"]);
         assert_eq!(keys(&registry), vec!["demo/one", "demo/two"]);
     }
@@ -196,16 +205,12 @@ mod tests {
     /// copies of it.
     #[test]
     fn a_providers_transport_is_stored_once() {
-        let registry = clean(&with("      demo/one: {}\n      demo/two: {}\n"));
+        let registry = clean(&with(&models(&["demo/one", "demo/two"])));
         let provider = registry.providers.get("demo").unwrap();
         assert_eq!(provider.name(), "demo");
         assert_eq!(provider.base_url(), "https://api.demo.test/v1");
         assert_eq!(provider.env_api_key(), Some("DEMO_API_KEY"));
         assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
-        assert_eq!(
-            provider.supported_apis(),
-            [Api::ChatCompletions, Api::Responses]
-        );
         for key in ["demo/one", "demo/two"] {
             assert_eq!(registry.models.get(key).unwrap().provider, "demo");
         }
@@ -217,8 +222,9 @@ mod tests {
     #[test]
     fn a_provider_may_name_no_env_api_key() {
         let registry = clean(&format!(
-            "{}      demo/plain: {{}}\n",
-            without("env_api_key")
+            "{}{}",
+            without("env_api_key"),
+            model("demo/plain")
         ));
         let provider = registry.providers.get("demo").unwrap();
         assert_eq!(provider.env_api_key(), None);
@@ -233,7 +239,7 @@ mod tests {
     /// the shape every GPT-5.6 entry uses.
     #[test]
     fn an_empty_entry_is_routable_and_records_no_limits() {
-        let registry = clean(&with("      demo/plain: {}\n"));
+        let registry = clean(&with(&model("demo/plain")));
         let spec = registry.models.get("demo/plain").unwrap();
         assert_eq!(spec.model(), "plain");
         assert_eq!(spec.capabilities().max_input_tokens(), None);
@@ -244,13 +250,10 @@ mod tests {
     /// entries for exactly this reason.
     #[test]
     fn capabilities_are_read_per_model() {
-        let registry = clean(&with(concat!(
-            "      demo/fast:\n",
-            "        capabilities:\n",
-            "          max_concurrent_requests: 2500\n",
-            "      demo/slow:\n",
-            "        capabilities:\n",
-            "          max_concurrent_requests: 500\n",
+        let registry = clean(&with(&format!(
+            "      demo/fast:\n{CHAT}        capabilities:\n          \
+             max_concurrent_requests: 2500\n      demo/slow:\n{CHAT}        \
+             capabilities:\n          max_concurrent_requests: 500\n"
         )));
         let caps = |key| registry.models.get(key).unwrap().capabilities();
         assert_eq!(caps("demo/fast").max_concurrent_requests(), Some(2500));
@@ -258,17 +261,149 @@ mod tests {
         assert_eq!(caps("demo/fast").max_input_tokens(), None);
     }
 
+    // ------------------------------------------------------ supported_apis
+
+    /// The list is read as written, in order, and each entry carries its own
+    /// (empty) settings.
+    #[test]
+    fn a_models_surfaces_are_read_from_its_own_entry() {
+        let registry = clean(&with(concat!(
+            "      demo/plain:\n",
+            "        supported_apis:\n",
+            "          - {api: openai_chat_completions}\n",
+            "          - {api: openai_responses}\n",
+        )));
+        assert_eq!(
+            registry.models.get("demo/plain").unwrap().supported_apis(),
+            [
+                SupportedApi {
+                    api: Api::OpenAiChatCompletions
+                },
+                SupportedApi {
+                    api: Api::OpenAiResponses
+                },
+            ]
+        );
+    }
+
+    /// The point of the whole field: one provider, two models, different
+    /// surfaces. Neither borrows anything from the other or from the host.
+    #[test]
+    fn two_models_of_one_provider_serve_different_surfaces() {
+        let registry = clean(&with(concat!(
+            "      demo/chat-only:\n",
+            "        supported_apis:\n",
+            "          - {api: openai_chat_completions}\n",
+            "      demo/responses-only:\n",
+            "        supported_apis:\n",
+            "          - {api: openai_responses}\n",
+        )));
+        let apis = |key| registry.models.get(key).unwrap().supported_apis().to_vec();
+        assert_eq!(
+            apis("demo/chat-only"),
+            [SupportedApi {
+                api: Api::OpenAiChatCompletions
+            }]
+        );
+        assert_eq!(
+            apis("demo/responses-only"),
+            [SupportedApi {
+                api: Api::OpenAiResponses
+            }]
+        );
+        // The one that does not serve chat completions says so by not holding
+        // the surface — which is what the client's gate reads.
+        assert!(
+            !registry
+                .models
+                .get("demo/responses-only")
+                .unwrap()
+                .supports_api(Api::OpenAiChatCompletions)
+        );
+    }
+
+    /// Required, with nothing to fall back on. This is the guard that keeps a
+    /// silent entry from meaning "everything my host serves" — a claim the
+    /// roster never made, and one that fails open.
+    #[test]
+    fn a_model_naming_no_surfaces_is_rejected() {
+        let err = load(&with("      demo/plain: {}\n")).unwrap_err();
+        assert!(err.contains("missing field"), "{err}");
+        assert!(err.contains("supported_apis"), "{err}");
+    }
+
+    /// The closed vocabulary, at the level that writes it. A typo cannot load,
+    /// so it never reaches a live provider as a 404.
+    #[test]
+    fn a_misspelled_surface_is_rejected() {
+        let err = load(&with(
+            "      demo/plain:\n        supported_apis:\n          - {api: chat_completions}\n",
+        ))
+        .unwrap_err();
+        assert!(err.contains("unknown variant `chat_completions`"), "{err}");
+        // The message names the vocabulary, so the line can be fixed without
+        // opening `types.rs`.
+        assert!(err.contains("openai_chat_completions"), "{err}");
+    }
+
+    /// An entry is a map, and `api` is the key it must carry. Leaving it out
+    /// names no surface at all, which serde reports against the entry.
+    #[test]
+    fn an_entry_naming_no_api_is_rejected() {
+        let err = load(&with(
+            "      demo/plain:\n        supported_apis:\n          - {}\n",
+        ))
+        .unwrap_err();
+        assert!(err.contains("missing field `api`"), "{err}");
+    }
+
+    /// An entry is as closed as the surface list itself. `api` is the only key
+    /// one takes today, so anything beside it is a typo or a stale roster —
+    /// not something to accept and drop.
+    ///
+    /// This is what `input_modalities` will land into: adding it makes this
+    /// exact roster line valid, at every surface at once.
+    #[test]
+    fn an_unknown_key_beside_the_api_is_rejected() {
+        let err = load(&with(concat!(
+            "      demo/plain:\n",
+            "        supported_apis:\n",
+            "          - api: openai_chat_completions\n",
+            "            input_modalities: [text]\n",
+        )))
+        .unwrap_err();
+        assert!(err.contains("unknown field"), "{err}");
+        assert!(err.contains("input_modalities"), "{err}");
+    }
+
+    /// The block form of an entry is the same YAML as the inline one the
+    /// roster writes, which is what makes opening one up to add a key a
+    /// formatting choice rather than a migration.
+    #[test]
+    fn an_entry_reads_the_same_written_inline_or_as_a_block() {
+        let inline = clean(&with(
+            "      demo/plain:\n        supported_apis:\n          - {api: openai_chat_completions}\n",
+        ));
+        let block = clean(&with(
+            "      demo/plain:\n        supported_apis:\n          - api: openai_chat_completions\n",
+        ));
+        assert_eq!(
+            inline.models.get("demo/plain").unwrap().supported_apis(),
+            block.models.get("demo/plain").unwrap().supported_apis()
+        );
+    }
+
     #[test]
     fn the_wire_name_defaults_to_the_keys_last_segment() {
-        let registry = clean(&with("      demo/plain: {}\n"));
+        let registry = clean(&with(&model("demo/plain")));
         assert_eq!(registry.models.get("demo/plain").unwrap().model(), "plain");
     }
 
     #[test]
     fn an_explicit_model_beats_the_keys_last_segment() {
-        let registry = clean(&with(
-            "      demo/chat:\n        model: demo-chat-20240101\n",
-        ));
+        let registry = clean(&with(&format!(
+            "      demo/chat:\n{CHAT}        model: demo-chat-20240101\n"
+        )));
         assert_eq!(
             registry.models.get("demo/chat").unwrap().model(),
             "demo-chat-20240101"
@@ -279,7 +414,7 @@ mod tests {
     /// through it, and the wire name is still the last segment.
     #[test]
     fn a_slash_containing_name_is_one_name() {
-        let registry = clean(&with("      demo/org/custom: {}\n"));
+        let registry = clean(&with(&model("demo/org/custom")));
         assert_eq!(
             registry.models.get("demo/org/custom").unwrap().model(),
             "custom"
@@ -291,10 +426,7 @@ mod tests {
     /// over a resolved roster.
     #[test]
     fn every_model_names_a_provider_that_exists() {
-        let registry = clean(&format!(
-            "{}{OTHER_PROVIDER}",
-            with("      demo/plain: {}\n")
-        ));
+        let registry = clean(&format!("{}{OTHER_PROVIDER}", with(&model("demo/plain"))));
         for (key, spec) in &registry.models {
             let provider = registry
                 .providers
@@ -338,7 +470,7 @@ mod tests {
     /// makes this an error.
     #[test]
     fn duplicate_keys_are_rejected() {
-        let err = load(&with("      demo/plain: {}\n      demo/plain: {}\n")).unwrap_err();
+        let err = load(&with(&models(&["demo/plain", "demo/plain"]))).unwrap_err();
         assert!(err.contains("duplicate"), "{err}");
         assert!(err.contains("demo/plain"), "{err}");
     }
@@ -348,16 +480,8 @@ mod tests {
     /// one has no spec to build.
     #[test]
     fn a_missing_provider_field_is_rejected() {
-        for field in ["base_url", "protocol", "supported_apis"] {
-            let mut yaml = without(field);
-            if field == "supported_apis" {
-                // Its two list items outlive the key they belonged to.
-                yaml = yaml
-                    .lines()
-                    .filter(|line| !line.trim_start().starts_with("- "))
-                    .fold(String::new(), |acc, line| acc + line + "\n");
-            }
-            let err = load(&format!("{yaml}      demo/plain: {{}}\n")).unwrap_err();
+        for field in ["base_url", "protocol"] {
+            let err = load(&format!("{}{}", without(field), model("demo/plain"))).unwrap_err();
             assert!(
                 err.contains("missing field") && err.contains(field),
                 "removing {field} gave: {err}"
@@ -369,7 +493,7 @@ mod tests {
     /// provider would resolve to nothing, and the message says what to write.
     #[test]
     fn a_model_key_missing_its_provider_prefix_is_rejected() {
-        let err = load(&with("      plain: {}\n")).unwrap_err();
+        let err = load(&with(&model("plain"))).unwrap_err();
         assert!(err.contains("has to start with `demo/`"), "{err}");
     }
 
@@ -377,13 +501,13 @@ mod tests {
     /// that is not its own.
     #[test]
     fn a_model_key_under_the_wrong_provider_is_rejected() {
-        let err = load(&with("      other/plain: {}\n")).unwrap_err();
+        let err = load(&with(&model("other/plain"))).unwrap_err();
         assert!(err.contains("has to start with `demo/`"), "{err}");
     }
 
     #[test]
     fn a_key_that_names_no_model_is_rejected() {
-        let err = load(&with("      demo/: {}\n")).unwrap_err();
+        let err = load(&with(&model("demo/"))).unwrap_err();
         assert!(err.contains("names no model"), "{err}");
     }
 
@@ -391,7 +515,7 @@ mod tests {
     /// since every other character is read literally as part of a name.
     #[test]
     fn an_empty_path_segment_is_rejected() {
-        let err = load(&with("      demo//custom: {}\n")).unwrap_err();
+        let err = load(&with(&model("demo//custom"))).unwrap_err();
         assert!(err.contains("an empty path segment"), "{err}");
     }
 

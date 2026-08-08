@@ -30,7 +30,7 @@ mod lint;
 mod testing;
 
 use types::Registry;
-pub use types::{Capabilities, ModelSpec, ProviderSpec};
+pub use types::{Capabilities, ModelSpec, ProviderSpec, SupportedApi};
 
 /// The shipped roster, loaded on first use.
 ///
@@ -47,10 +47,13 @@ static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
 /// provider that serves it, and the model itself.
 ///
 /// Two rows rather than one merged spec, because the roster keeps them at two
-/// levels — how the API is reached and what it serves is the provider's, the
-/// upstream name and the published limits are the model's. Nothing is copied
-/// between them, so a provider's transport is stated once no matter how many
-/// models it serves.
+/// levels — how the API is reached is the provider's; the upstream name, the
+/// surfaces served, and the published limits are the model's. The transport is
+/// stated once no matter how many models a provider serves.
+///
+/// What a request can ASK FOR is the model's alone. A provider is a host, and
+/// one host commonly serves chat completions, embeddings, and moderation from
+/// disjoint sets of models, so there is nothing at that level to route on.
 ///
 /// The key matches exactly or not at all. Nothing routes on a guess — no
 /// pattern, no catch-all, no fallback — so a name no entry claims is an error,
@@ -67,8 +70,9 @@ static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
 /// ```
 /// let (provider, model) = warpllm::fetch_model("openai/gpt-5.6")?;
 /// assert_eq!(provider.name(), "openai");
-/// assert!(provider.supports_api(warpllm::Api::ChatCompletions));
 /// assert_eq!(model.model(), "gpt-5.6");
+/// // The model's own list is what a request is routed on.
+/// assert!(model.supports_api(warpllm::Api::OpenAiChatCompletions));
 ///
 /// // A name nobody registered is an error, never a guess.
 /// assert!(warpllm::fetch_model("openai/nonexistent").is_err());
@@ -128,7 +132,7 @@ fn resolve<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::testing::{clean, keys, providers, with};
+    use super::testing::{CHAT, clean, keys, model, models, providers, with};
     use super::*;
     use crate::types::{Api, Protocol};
 
@@ -138,9 +142,10 @@ mod tests {
     /// at all, and what ships upstream is that entry's name.
     #[test]
     fn a_key_matches_its_own_entry_or_nothing() {
-        let registry = clean(&with(
-            "      demo/pinned:\n        model: pinned-2024\n      demo/plain: {}\n",
-        ));
+        let registry = clean(&with(&format!(
+            "      demo/pinned:\n{CHAT}        model: pinned-2024\n{}",
+            model("demo/plain")
+        )));
         assert_eq!(
             resolve(&registry, "demo/pinned").unwrap().1.model(),
             "pinned-2024"
@@ -155,7 +160,7 @@ mod tests {
     /// the whole point of handing back both halves.
     #[test]
     fn a_match_carries_its_provider() {
-        let registry = clean(&with("      demo/plain: {}\n"));
+        let registry = clean(&with(&model("demo/plain")));
         let (provider, _) = resolve(&registry, "demo/plain").unwrap();
         assert_eq!(provider.name(), "demo");
         assert_eq!(provider.base_url(), "https://api.demo.test/v1");
@@ -170,7 +175,7 @@ mod tests {
     /// for a misspelling: nothing.
     #[test]
     fn an_unlisted_name_is_rejected() {
-        let registry = clean(&with("      demo/plain: {}\n"));
+        let registry = clean(&with(&model("demo/plain")));
         assert!(resolve(&registry, "demo/plain").is_some());
         for unlisted in ["demo/unlisted", "demo/*", "demo/pl*", "*"] {
             assert!(resolve(&registry, unlisted).is_none(), "`{unlisted}`");
@@ -181,7 +186,7 @@ mod tests {
     /// grouping buys it no fallback.
     #[test]
     fn a_grouped_name_matches_only_its_own_entry() {
-        let registry = clean(&with("      demo/org/one: {}\n      demo/plain: {}\n"));
+        let registry = clean(&with(&models(&["demo/org/one", "demo/plain"])));
         assert!(resolve(&registry, "demo/org/one").is_some());
         assert!(resolve(&registry, "demo/org/two").is_none());
         assert!(resolve(&registry, "demo/org").is_none());
@@ -191,7 +196,7 @@ mod tests {
     /// routes to it.
     #[test]
     fn a_provider_name_is_not_routable() {
-        let registry = clean(&with("      demo/plain: {}\n"));
+        let registry = clean(&with(&model("demo/plain")));
         assert!(resolve(&registry, "demo/").is_none());
         assert!(resolve(&registry, "demo").is_none());
     }
@@ -256,8 +261,7 @@ mod tests {
         assert_eq!(provider.base_url(), "https://openrouter.ai/api/v1");
         assert_eq!(provider.env_api_key(), Some("OPENROUTER_API_KEY"));
         assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
-        assert!(provider.supports_api(Api::ChatCompletions));
-        assert!(!provider.supports_api(Api::Responses));
+        assert!(model.supports_api(Api::OpenAiChatCompletions));
         assert_eq!(model.model(), "anthropic/claude-sonnet-4");
     }
 
@@ -294,16 +298,59 @@ mod tests {
         }
     }
 
-    /// API surfaces are the provider's claim, and differ between providers.
+    /// Every shipped entry lists EXACTLY chat completions — the one surface
+    /// warpllm implements. Iterates [`REGISTRY`] so a new entry is covered
+    /// without being added here.
+    ///
+    /// Both halves earn their keep, in opposite directions:
+    ///
+    /// Serving it at all is what the client can route. An entry that did not
+    /// would be admitted by the roster and refused by `validate_api`, so this
+    /// is where that shows up rather than at request time. When a genuine
+    /// non-chat model lands — an embeddings or moderation name — it belongs in
+    /// an exclusion here rather than being quietly made to serve chat.
+    ///
+    /// Serving nothing MORE is the roster rule that a surface is listed only
+    /// once warpllm can serve it. `openai_responses` is real, and every OpenAI
+    /// model here really does serve it, and it is still absent — because there
+    /// is no code behind it, so an entry claiming it would record a capability
+    /// nothing can act on. This is what catches it being added early.
+    ///
+    /// It also means the shipped roster can no longer show two models of one
+    /// provider differing. That is proved over fixtures instead, by
+    /// `load::tests::two_models_of_one_provider_serve_different_surfaces`.
     #[test]
-    fn supported_apis_resolve_for_the_addressed_provider() {
-        let (openai, _) = fetch_model("openai/gpt-5.6").unwrap();
-        assert!(openai.supports_api(Api::ChatCompletions));
-        assert!(openai.supports_api(Api::Responses));
+    fn every_shipped_model_serves_exactly_chat_completions() {
+        assert!(!REGISTRY.models.is_empty(), "the registry is empty");
+        for (model_str, spec) in &REGISTRY.models {
+            assert_eq!(
+                spec.supported_apis(),
+                [SupportedApi {
+                    api: Api::OpenAiChatCompletions
+                }],
+                "`{model_str}` lists a surface warpllm does not implement, or \
+                 omits the one it does"
+            );
+        }
+    }
 
-        let (deepseek, _) = fetch_model("deepseek/deepseek-v4-flash").unwrap();
-        assert!(deepseek.supports_api(Api::ChatCompletions));
-        assert!(!deepseek.supports_api(Api::Responses));
+    /// Every surface on every entry is spoken in the protocol its provider
+    /// speaks — the invariant `lint::serves` enforces, stated here over the
+    /// table a caller actually routes against.
+    #[test]
+    fn no_model_names_a_surface_its_provider_cannot_speak() {
+        for (model_str, spec) in &REGISTRY.models {
+            let (provider, _) = fetch_model(model_str).unwrap();
+            for entry in spec.supported_apis() {
+                assert_eq!(
+                    entry.api().protocol(),
+                    provider.protocol(),
+                    "`{model_str}` claims `{:?}`, which `{}` does not speak",
+                    entry.api(),
+                    provider.name()
+                );
+            }
+        }
     }
 
     /// Every registered model resolves to its own entry. Iterates the registry

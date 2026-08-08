@@ -9,7 +9,7 @@ use crate::gateway::openai_compat;
 use crate::protocol::openai_compat::chat_completions::types::{
     CreateChatCompletionRequest, CreateChatCompletionResponse,
 };
-use crate::registry::{ProviderSpec, fetch_model};
+use crate::registry::{ModelSpec, ProviderSpec, fetch_model};
 use crate::types::{Api, Protocol};
 
 pub struct Client {
@@ -57,13 +57,12 @@ impl Client {
         let requested_model = request.model.clone();
         // Half one: the roster. Closed, so an unregistered name stops here.
         let (provider, model) = fetch_model(&requested_model)?;
-        if !provider.supports_api(Api::ChatCompletions) {
-            return Err(Error::InvalidInput(format!(
-                "{}: {} does not serve chat_completions",
-                provider.name(),
-                requested_model
-            )));
-        }
+        Self::validate_api(
+            model,
+            Api::OpenAiChatCompletions,
+            provider,
+            &requested_model,
+        )?;
         // Half two: this client. A registered model whose provider was not
         // authenticated at construction never reaches the network.
         let api_key = self.api_key(provider)?;
@@ -111,6 +110,42 @@ impl Client {
             })
     }
 
+    /// Whether the routed MODEL serves `api`, which is what every entrypoint
+    /// has to establish before it sends anything.
+    ///
+    /// Asking the model is the whole point, and the only place the answer
+    /// exists: a provider is a host, and one host commonly serves chat
+    /// completions, embeddings, and moderation from three disjoint sets of
+    /// models. There is nothing at the provider level to ask.
+    ///
+    /// Takes the surface rather than naming one, so the second entrypoint
+    /// reuses this rather than copying it — and so the refusal cannot claim
+    /// the wrong surface, which a hard-coded message eventually would.
+    ///
+    /// `model` and `api` are the check; `provider` and `requested` only build
+    /// the message. Split out from [`Client::chat_completions`] so the refusal
+    /// can be tested at all: every model the roster ships today serves chat
+    /// completions, so the failing branch is otherwise unreachable from the
+    /// public entrypoint until one lands that does not.
+    fn validate_api(
+        model: &'static ModelSpec,
+        api: Api,
+        provider: &'static ProviderSpec,
+        requested: &str,
+    ) -> Result<()> {
+        if model.supports_api(api) {
+            return Ok(());
+        }
+        // The roster's own spelling for the surface, and the provider because
+        // the roster is where what-is-served is recorded — between them they
+        // name the line a reader would go and fix.
+        Err(Error::InvalidInput(format!(
+            "{}: {requested} does not serve {}",
+            provider.name(),
+            api.as_str()
+        )))
+    }
+
     /// A configured `base_url` overrides the provider default (proxies,
     /// tests); otherwise each provider talks to its own API.
     fn base_url(&self, provider: &'static ProviderSpec) -> &str {
@@ -126,7 +161,7 @@ mod tests {
     use super::*;
     use crate::credentials::with_env;
     use crate::protocol::openai_compat::chat_completions::types::ChatCompletionRequestMessage;
-    use crate::registry::{Capabilities, ModelSpec};
+    use crate::registry::{Capabilities, ModelSpec, SupportedApi};
 
     /// A client built under the environment lock.
     ///
@@ -151,8 +186,114 @@ mod tests {
             base_url: base_url.into(),
             env_api_key: env_api_key.map(str::to_string),
             protocol: Protocol::OpenAiCompat,
-            supported_apis: vec![Api::ChatCompletions],
         }))
+    }
+
+    /// Leaked for the same reason as [`demo_provider`]. Takes its surfaces so
+    /// a caller can express the case the roster cannot yet: a model under a
+    /// chat-serving host that does not itself serve chat.
+    fn demo_model(supported_apis: Vec<SupportedApi>) -> &'static ModelSpec {
+        Box::leak(Box::new(ModelSpec {
+            provider: "demo".into(),
+            model: "demo-embed".into(),
+            supported_apis,
+            capabilities: Capabilities::blank(),
+        }))
+    }
+
+    /// The gate the whole model-level `supported_apis` split exists for. This
+    /// model sits under a perfectly ordinary chat-serving provider and does
+    /// not serve chat itself, which only the model's own list can say.
+    #[test]
+    fn a_model_that_does_not_serve_the_api_is_refused() {
+        let err = Client::validate_api(
+            demo_model(vec![SupportedApi {
+                api: Api::OpenAiResponses,
+            }]),
+            Api::OpenAiChatCompletions,
+            demo_provider("https://api.demo.test", Some("DEMO_API_KEY")),
+            "demo/embed",
+        )
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("demo/embed"), "{message}");
+        // The roster's spelling, not the variant's — this is the string a
+        // reader greps `specs.yaml` for.
+        assert!(
+            message.contains("does not serve openai_chat_completions"),
+            "{message}"
+        );
+
+        // A 400: the caller asked for something this model cannot do, which is
+        // theirs to fix, not the provider's to fail.
+        let wire: serde_json::Value = serde_json::from_str(&err.to_openai_json()).unwrap();
+        assert_eq!(wire["status"], 400);
+    }
+
+    /// The other side of the same gate: a model that does serve the surface
+    /// passes, so the check cannot be one that refuses everything. Listing a
+    /// second surface alongside it changes nothing — each is its own claim.
+    #[test]
+    fn a_model_that_serves_the_api_is_admitted() {
+        Client::validate_api(
+            demo_model(vec![
+                SupportedApi {
+                    api: Api::OpenAiChatCompletions,
+                },
+                SupportedApi {
+                    api: Api::OpenAiResponses,
+                },
+            ]),
+            Api::OpenAiChatCompletions,
+            demo_provider("https://api.demo.test", Some("DEMO_API_KEY")),
+            "demo/chat",
+        )
+        .unwrap();
+    }
+
+    /// The point of passing the surface in: one model, and the answer depends
+    /// on which surface is asked about. A check that ignored its argument
+    /// would pass both of the tests above and fail here.
+    #[test]
+    fn the_answer_depends_on_which_api_is_asked_about() {
+        let model = demo_model(vec![SupportedApi {
+            api: Api::OpenAiResponses,
+        }]);
+        let provider = demo_provider("https://api.demo.test", Some("DEMO_API_KEY"));
+
+        Client::validate_api(model, Api::OpenAiResponses, provider, "demo/x").unwrap();
+        for refused in [Api::OpenAiChatCompletions, Api::OpenAiChatCompletionsStream] {
+            let message = Client::validate_api(model, refused, provider, "demo/x")
+                .unwrap_err()
+                .to_string();
+            // Each refusal names the surface it was asked about, so a caller
+            // is never told the wrong thing is missing.
+            assert!(
+                message.contains(refused.as_str()),
+                "asked about `{}`: {message}",
+                refused.as_str()
+            );
+        }
+    }
+
+    /// Streaming is its own surface, so serving chat completions says nothing
+    /// about it. The roster documents that; this is where it holds.
+    #[test]
+    fn chat_completions_does_not_imply_its_streaming_surface() {
+        let err = Client::validate_api(
+            demo_model(vec![SupportedApi {
+                api: Api::OpenAiChatCompletions,
+            }]),
+            Api::OpenAiChatCompletionsStream,
+            demo_provider("https://api.demo.test", Some("DEMO_API_KEY")),
+            "demo/chat",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("does not serve openai_chat_completions_stream"),
+            "{err}"
+        );
     }
 
     /// A provider that names no environment variable has no key source at all,
@@ -220,6 +361,9 @@ mod tests {
         let aliased = Box::leak(Box::new(ModelSpec {
             provider: "demo".into(),
             model: "demo-chat-20240101".into(),
+            supported_apis: vec![SupportedApi {
+                api: Api::OpenAiChatCompletions,
+            }],
             capabilities: Capabilities::blank(),
         }));
         let client = client(ClientConfig::default());
