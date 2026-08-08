@@ -24,6 +24,25 @@ and "Removed" is breaking.
   closed**: a name no entry claims is an error, never a guess at an upstream
   default, so a typo cannot become a live, billed request. There is no
   wildcard — `openai/*` registers a model literally named `*`.
+- **Every model declares the API surfaces it serves**, and inherits nothing
+  from its provider:
+
+  ```yaml
+  openai/gpt-5.6:
+    supported_apis:
+      - {api: openai_compat_chat_completions}
+  ```
+
+  A provider is a host, not a capability — one host commonly serves chat
+  completions, embeddings, and moderation from disjoint sets of models — so
+  there is nothing at that level to route on. A request for a surface the model
+  does not list is refused before the network, rather than discovered as a 404
+  upstream. A surface name carries the protocol it is spoken in, which is what
+  lets a model one day list `anthropic_messages` beside the entry above.
+- **Provider entries are transport only**: `base_url`, `env_api_key`, `models`.
+  There is no `protocol:` field — the surfaces a model lists already say which
+  wire format is in play, so one host may serve models over different
+  protocols.
 - **DeepSeek and OpenRouter providers**, alongside OpenAI. Adding an
   OpenAI-compatible provider is a YAML edit and no Rust.
 - **Environment-driven provider discovery.** Building a client reads each
@@ -39,7 +58,8 @@ and "Removed" is breaking.
   exhaustion reads the same whichever provider served it. Python and Node raise
   exception classes mirroring the official OpenAI SDK.
 - Registry read surface in Rust: `fetch_model`, `ProviderSpec`, `ModelSpec`,
-  `Capabilities`, `Api`, `Protocol`.
+  `Capabilities`, `SupportedApi`, `Api`. Every field is private and there is no
+  public constructor, so a spec is read-only outside the crate.
 - `JsonClient`, the JSON boundary both native bindings share.
 - Quickstart examples for all three languages in `examples/`.
 

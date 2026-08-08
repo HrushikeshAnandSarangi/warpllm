@@ -38,11 +38,7 @@ pub(super) fn check(yaml: &str) -> Result<(), String> {
                  last segment"
             ));
         }
-        let provider = registry
-            .providers
-            .get(&spec.provider)
-            .expect("load registers a provider for every model it holds");
-        serves(spec, provider).map_err(|e| format!("`{key}`: {e}"))?;
+        serves(spec).map_err(|e| format!("`{key}`: {e}"))?;
     }
     env_api_keys(&registry)
 }
@@ -170,17 +166,17 @@ fn routable(provider: &ProviderSpec) -> Result<(), String> {
     Ok(())
 }
 
-/// A model's `supported_apis`: non-empty, without repeats, and every surface
-/// one its provider can actually speak.
+/// A model's `supported_apis`: non-empty, and without repeats.
 ///
-/// The list is the model's alone — nothing is inherited — so all three of
-/// these are things only the roster's own text can get wrong.
+/// The list is the model's alone — nothing is inherited — so both of these are
+/// things only the roster's own text can get wrong.
 ///
-/// The protocol check is what keeps a surface from naming a wire format its
-/// host does not speak. Each variant carries its protocol in its name, so
-/// `openai_responses` under a provider speaking something else is a roster
-/// mistake that would otherwise be found by sending the request.
-fn serves(spec: &ModelSpec, provider: &ProviderSpec) -> Result<(), String> {
+/// There is deliberately no cross-check against the provider. A surface names
+/// the wire format it is spoken in, and the provider records none, so there is
+/// nothing left for the two to disagree about — which is the point: one host
+/// may serve one model over one protocol and its neighbour over another, and
+/// no roster rule has to be taught the exception.
+fn serves(spec: &ModelSpec) -> Result<(), String> {
     if spec.supported_apis().is_empty() {
         return Err(
             "supported_apis is empty, so nothing could ever route to this model; \
@@ -196,15 +192,6 @@ fn serves(spec: &ModelSpec, provider: &ProviderSpec) -> Result<(), String> {
         let api = entry.api();
         if !seen.insert(api) {
             return Err(format!("`{api:?}` is listed twice"));
-        }
-        if api.protocol() != provider.protocol() {
-            return Err(format!(
-                "`{api:?}` is spoken in {:?}, but provider `{}` speaks {:?}; a \
-                 surface names its own protocol, and the two have to agree",
-                api.protocol(),
-                provider.name(),
-                provider.protocol()
-            ));
         }
     }
     Ok(())
@@ -301,17 +288,19 @@ mod tests {
     /// contributor fix the line without opening `protocol/types.rs`.
     #[test]
     fn an_api_outside_the_vocabulary_fails_to_load() {
-        let yaml = with(&model("demo/plain"))
-            .replace("api: openai_chat_completions", "api: anthropic_messages");
+        let yaml = with(&model("demo/plain")).replace(
+            "api: openai_compat_chat_completions",
+            "api: anthropic_messages",
+        );
         let err = load(&yaml).unwrap_err();
         assert!(
             err.contains("unknown variant `anthropic_messages`"),
             "{err}"
         );
         for known in [
-            "openai_chat_completions",
-            "openai_chat_completions_stream",
-            "openai_responses",
+            "openai_compat_chat_completions",
+            "openai_compat_chat_completions_stream",
+            "openai_compat_responses",
         ] {
             assert!(err.contains(known), "vocabulary missing {known}: {err}");
         }
@@ -335,8 +324,8 @@ mod tests {
         // it is judged against, so nobody has to work out what "unsorted"
         // meant.
         assert!(err.contains("`demo`'s models"), "{err}");
-        assert!(err.contains("`demo/alpha` (line 10)"), "{err}");
-        assert!(err.contains("move it above `demo/zeta` (line 7)"), "{err}");
+        assert!(err.contains("`demo/alpha` (line 9)"), "{err}");
+        assert!(err.contains("move it above `demo/zeta` (line 6)"), "{err}");
         assert!(err.contains("ascending BYTE order"), "{err}");
     }
 
@@ -379,8 +368,8 @@ mod tests {
     #[test]
     fn the_order_error_points_at_the_right_line() {
         let err = check(&with(&models(&["demo/model-x", "demo/model"]))).unwrap_err();
-        assert!(err.contains("`demo/model` (line 10)"), "{err}");
-        assert!(err.contains("above `demo/model-x` (line 7)"), "{err}");
+        assert!(err.contains("`demo/model` (line 9)"), "{err}");
+        assert!(err.contains("above `demo/model-x` (line 6)"), "{err}");
     }
 
     /// Both ways of writing "no models yet" load fine and are caught here,
@@ -407,26 +396,21 @@ mod tests {
         assert!(err.contains("names no providers"), "{err}");
     }
 
-    /// A surface names its protocol, and a model cannot name one its host does
-    /// not speak. Unreachable while `openai_compat` is the only protocol —
-    /// every surface belongs to it — so this asserts the rule directly on
-    /// [`serves`] rather than through a roster that cannot express the
-    /// mistake yet.
-    ///
-    /// Written now rather than retrofitted the day a second protocol lands,
-    /// which is the day it starts being able to fail.
+    /// Two models of one provider may serve entirely different surfaces, and
+    /// the lint has no opinion about it. This used to be checked against the
+    /// provider's own `protocol:`; with that gone there is nothing to agree
+    /// with, which is what lets one host serve a chat model beside a
+    /// Responses-only one.
     #[test]
-    fn a_model_naming_a_surface_its_provider_cannot_speak_is_rejected() {
-        let registry = clean(&with(&model("demo/plain")));
-        let provider = registry.providers.get("demo").unwrap();
-        let spec = registry.models.get("demo/plain").unwrap();
-        // The real pair agrees, which is the case that has to keep passing.
-        serves(spec, provider).unwrap();
-        assert_eq!(
-            spec.supported_apis()[0].api().protocol(),
-            provider.protocol(),
-            "the check has nothing to catch unless these can differ"
-        );
+    fn one_provider_may_serve_models_with_disjoint_surfaces() {
+        clean(&with(concat!(
+            "      demo/chat-only:\n",
+            "        supported_apis:\n",
+            "          - {api: openai_compat_chat_completions}\n",
+            "      demo/responses-only:\n",
+            "        supported_apis:\n",
+            "          - {api: openai_compat_responses}\n",
+        )));
     }
 
     /// The same surface twice is one mistake, however its settings are
@@ -437,8 +421,8 @@ mod tests {
         let yaml = with(concat!(
             "      demo/plain:\n",
             "        supported_apis:\n",
-            "          - {api: openai_chat_completions}\n",
-            "          - {api: openai_chat_completions}\n",
+            "          - {api: openai_compat_chat_completions}\n",
+            "          - {api: openai_compat_chat_completions}\n",
         ));
         assert!(
             load(&yaml).is_ok(),

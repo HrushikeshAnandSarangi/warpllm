@@ -51,6 +51,10 @@ static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
 /// surfaces served, and the published limits are the model's. The transport is
 /// stated once no matter how many models a provider serves.
 ///
+/// Which WIRE FORMAT is spoken is the model's, not the provider's: an
+/// [`crate::Api`] names its own protocol, so the surfaces a model lists say it
+/// already.
+///
 /// What a request can ASK FOR is the model's alone. A provider is a host, and
 /// one host commonly serves chat completions, embeddings, and moderation from
 /// disjoint sets of models, so there is nothing at that level to route on.
@@ -72,7 +76,7 @@ static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
 /// assert_eq!(provider.name(), "openai");
 /// assert_eq!(model.model(), "gpt-5.6");
 /// // The model's own list is what a request is routed on.
-/// assert!(model.supports_api(warpllm::Api::OpenAiChatCompletions));
+/// assert!(model.supports_api(warpllm::Api::OpenAiCompatChatCompletions));
 ///
 /// // A name nobody registered is an error, never a guess.
 /// assert!(warpllm::fetch_model("openai/nonexistent").is_err());
@@ -134,7 +138,7 @@ fn resolve<'a>(
 mod tests {
     use super::testing::{CHAT, clean, keys, model, models, providers, with};
     use super::*;
-    use crate::types::{Api, Protocol};
+    use crate::types::Api;
 
     // ------------------------------------------------------------- matching
 
@@ -164,7 +168,6 @@ mod tests {
         let (provider, _) = resolve(&registry, "demo/plain").unwrap();
         assert_eq!(provider.name(), "demo");
         assert_eq!(provider.base_url(), "https://api.demo.test/v1");
-        assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
     }
 
     /// The registry is closed, so an unlisted name is an error — the whole
@@ -250,7 +253,6 @@ mod tests {
         assert_eq!(provider.name(), "deepseek");
         assert_eq!(provider.base_url(), "https://api.deepseek.com");
         assert_eq!(provider.env_api_key(), Some("DEEPSEEK_API_KEY"));
-        assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
         assert_eq!(model.model(), "deepseek-v4-flash");
     }
 
@@ -260,8 +262,7 @@ mod tests {
         assert_eq!(provider.name(), "openrouter");
         assert_eq!(provider.base_url(), "https://openrouter.ai/api/v1");
         assert_eq!(provider.env_api_key(), Some("OPENROUTER_API_KEY"));
-        assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
-        assert!(model.supports_api(Api::OpenAiChatCompletions));
+        assert!(model.supports_api(Api::OpenAiCompatChatCompletions));
         assert_eq!(model.model(), "anthropic/claude-sonnet-4");
     }
 
@@ -311,10 +312,11 @@ mod tests {
     /// an exclusion here rather than being quietly made to serve chat.
     ///
     /// Serving nothing MORE is the roster rule that a surface is listed only
-    /// once warpllm can serve it. `openai_responses` is real, and every OpenAI
-    /// model here really does serve it, and it is still absent — because there
-    /// is no code behind it, so an entry claiming it would record a capability
-    /// nothing can act on. This is what catches it being added early.
+    /// once warpllm can serve it. `openai_compat_responses` is real, and every
+    /// OpenAI model here really does serve it, and it is still absent — because
+    /// there is no code behind it, so an entry claiming it would record a
+    /// capability nothing can act on. This is what catches it being added
+    /// early.
     ///
     /// It also means the shipped roster can no longer show two models of one
     /// provider differing. That is proved over fixtures instead, by
@@ -326,30 +328,11 @@ mod tests {
             assert_eq!(
                 spec.supported_apis(),
                 [SupportedApi {
-                    api: Api::OpenAiChatCompletions
+                    api: Api::OpenAiCompatChatCompletions
                 }],
                 "`{model_str}` lists a surface warpllm does not implement, or \
                  omits the one it does"
             );
-        }
-    }
-
-    /// Every surface on every entry is spoken in the protocol its provider
-    /// speaks — the invariant `lint::serves` enforces, stated here over the
-    /// table a caller actually routes against.
-    #[test]
-    fn no_model_names_a_surface_its_provider_cannot_speak() {
-        for (model_str, spec) in &REGISTRY.models {
-            let (provider, _) = fetch_model(model_str).unwrap();
-            for entry in spec.supported_apis() {
-                assert_eq!(
-                    entry.api().protocol(),
-                    provider.protocol(),
-                    "`{model_str}` claims `{:?}`, which `{}` does not speak",
-                    entry.api(),
-                    provider.name()
-                );
-            }
         }
     }
 

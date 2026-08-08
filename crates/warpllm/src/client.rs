@@ -10,7 +10,7 @@ use crate::protocol::openai_compat::chat_completions::types::{
     CreateChatCompletionRequest, CreateChatCompletionResponse,
 };
 use crate::registry::{ModelSpec, ProviderSpec, fetch_model};
-use crate::types::{Api, Protocol};
+use crate::types::Api;
 
 pub struct Client {
     http: reqwest::Client,
@@ -59,7 +59,7 @@ impl Client {
         let (provider, model) = fetch_model(&requested_model)?;
         Self::validate_api(
             model,
-            Api::OpenAiChatCompletions,
+            Api::OpenAiCompatChatCompletions,
             provider,
             &requested_model,
         )?;
@@ -73,20 +73,18 @@ impl Client {
         // warpllm's routing alias differs from the provider's own name.
         let normalized =
             openai_compat::api::chat_completions::ingest_request(request, model.model());
-        // One arm per protocol, each `&ChatRequest -> ChatResponse`. Adding a
-        // protocol is a line here plus its own `exchange`.
-        let response = match provider.protocol() {
-            Protocol::OpenAiCompat => {
-                openai_compat::api::chat_completions::exchange(
-                    &normalized,
-                    &self.http,
-                    provider.name(),
-                    self.base_url(provider),
-                    api_key,
-                )
-                .await?
-            }
-        };
+        // No dispatch to do: the surface above names its own protocol, so
+        // asking for `openai_compat_chat_completions` IS the choice of module.
+        // A second protocol arrives as a second entrypoint, not as an arm here
+        // — this one takes an OpenAI-shaped request by signature.
+        let response = openai_compat::api::chat_completions::exchange(
+            &normalized,
+            &self.http,
+            provider.name(),
+            self.base_url(provider),
+            api_key,
+        )
+        .await?;
         let mut completion =
             openai_compat::api::chat_completions::render_response(&response, provider.name());
         // Echo the caller's provider-prefixed string, not the upstream echo.
@@ -185,7 +183,6 @@ mod tests {
             name: "demo".into(),
             base_url: base_url.into(),
             env_api_key: env_api_key.map(str::to_string),
-            protocol: Protocol::OpenAiCompat,
         }))
     }
 
@@ -208,9 +205,9 @@ mod tests {
     fn a_model_that_does_not_serve_the_api_is_refused() {
         let err = Client::validate_api(
             demo_model(vec![SupportedApi {
-                api: Api::OpenAiResponses,
+                api: Api::OpenAiCompatResponses,
             }]),
-            Api::OpenAiChatCompletions,
+            Api::OpenAiCompatChatCompletions,
             demo_provider("https://api.demo.test", Some("DEMO_API_KEY")),
             "demo/embed",
         )
@@ -220,7 +217,7 @@ mod tests {
         // The roster's spelling, not the variant's — this is the string a
         // reader greps `specs.yaml` for.
         assert!(
-            message.contains("does not serve openai_chat_completions"),
+            message.contains("does not serve openai_compat_chat_completions"),
             "{message}"
         );
 
@@ -238,13 +235,13 @@ mod tests {
         Client::validate_api(
             demo_model(vec![
                 SupportedApi {
-                    api: Api::OpenAiChatCompletions,
+                    api: Api::OpenAiCompatChatCompletions,
                 },
                 SupportedApi {
-                    api: Api::OpenAiResponses,
+                    api: Api::OpenAiCompatResponses,
                 },
             ]),
-            Api::OpenAiChatCompletions,
+            Api::OpenAiCompatChatCompletions,
             demo_provider("https://api.demo.test", Some("DEMO_API_KEY")),
             "demo/chat",
         )
@@ -257,12 +254,15 @@ mod tests {
     #[test]
     fn the_answer_depends_on_which_api_is_asked_about() {
         let model = demo_model(vec![SupportedApi {
-            api: Api::OpenAiResponses,
+            api: Api::OpenAiCompatResponses,
         }]);
         let provider = demo_provider("https://api.demo.test", Some("DEMO_API_KEY"));
 
-        Client::validate_api(model, Api::OpenAiResponses, provider, "demo/x").unwrap();
-        for refused in [Api::OpenAiChatCompletions, Api::OpenAiChatCompletionsStream] {
+        Client::validate_api(model, Api::OpenAiCompatResponses, provider, "demo/x").unwrap();
+        for refused in [
+            Api::OpenAiCompatChatCompletions,
+            Api::OpenAiCompatChatCompletionsStream,
+        ] {
             let message = Client::validate_api(model, refused, provider, "demo/x")
                 .unwrap_err()
                 .to_string();
@@ -282,16 +282,16 @@ mod tests {
     fn chat_completions_does_not_imply_its_streaming_surface() {
         let err = Client::validate_api(
             demo_model(vec![SupportedApi {
-                api: Api::OpenAiChatCompletions,
+                api: Api::OpenAiCompatChatCompletions,
             }]),
-            Api::OpenAiChatCompletionsStream,
+            Api::OpenAiCompatChatCompletionsStream,
             demo_provider("https://api.demo.test", Some("DEMO_API_KEY")),
             "demo/chat",
         )
         .unwrap_err()
         .to_string();
         assert!(
-            err.contains("does not serve openai_chat_completions_stream"),
+            err.contains("does not serve openai_compat_chat_completions_stream"),
             "{err}"
         );
     }
@@ -362,7 +362,7 @@ mod tests {
             provider: "demo".into(),
             model: "demo-chat-20240101".into(),
             supported_apis: vec![SupportedApi {
-                api: Api::OpenAiChatCompletions,
+                api: Api::OpenAiCompatChatCompletions,
             }],
             capabilities: Capabilities::blank(),
         }));

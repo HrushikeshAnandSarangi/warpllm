@@ -10,16 +10,15 @@ use super::types::Registry;
 
 /// One provider with no models yet — the base most cases diverge from.
 ///
-/// Six lines, ending on its `models:` key, so a case that appends entries
-/// knows its first key lands on line 7 — which is what the sort check's error
+/// Five lines, ending on its `models:` key, so a case that appends entries
+/// knows its first key lands on line 6 — which is what the sort check's error
 /// message is asserted against. A [`model`] entry is three lines, so the
-/// second key lands on line 10.
+/// second key lands on line 9.
 pub(super) const PROVIDER: &str = "\
 providers:
   demo:
     base_url: \"https://api.demo.test/v1\"
     env_api_key: DEMO_API_KEY
-    protocol: openai_compat
     models:
 ";
 
@@ -33,11 +32,10 @@ providers:
 pub(super) const OTHER_PROVIDER: &str = "  other:
     base_url: \"https://api.other.test\"
     env_api_key: OTHER_API_KEY
-    protocol: openai_compat
     models:
       other/plain:
         supported_apis:
-          - {api: openai_chat_completions}
+          - {api: openai_compat_chat_completions}
 ";
 
 /// The one line every model entry must carry, indented to sit under a key at
@@ -47,7 +45,7 @@ pub(super) const OTHER_PROVIDER: &str = "  other:
 /// thing as a bare `demo/plain: {}` any more. Cases that have no opinion about
 /// surfaces say so through [`model`] rather than repeating this.
 pub(super) const CHAT: &str =
-    "        supported_apis:\n          - {api: openai_chat_completions}\n";
+    "        supported_apis:\n          - {api: openai_compat_chat_completions}\n";
 
 /// The minimal valid entry for `key`: it serves chat completions and says
 /// nothing else.

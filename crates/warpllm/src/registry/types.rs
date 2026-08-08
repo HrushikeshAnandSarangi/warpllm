@@ -1,17 +1,22 @@
 //! What the registry holds, and how a caller reads it.
 //!
 //! Two levels, two types, because they answer two questions. A
-//! [`ProviderSpec`] is how an API is reached: one host, one credential, one
-//! wire format. A [`ModelSpec`] is one routable name under that provider,
-//! carrying what differs between models of the same one — its limits, and
-//! which API surfaces it serves. [`crate::fetch_model`] hands back one of each
-//! and merges nothing.
+//! [`ProviderSpec`] is how an API is reached: one host and one credential. A
+//! [`ModelSpec`] is one routable name under that provider, carrying what
+//! differs between models of the same one — its limits, and which API surfaces
+//! it serves. [`crate::fetch_model`] hands back one of each and merges nothing.
 //!
 //! `supported_apis` is the MODEL's, and only the model's. A provider is a
 //! host, not a capability: one host commonly serves chat completions,
 //! embeddings, and moderation from three disjoint sets of models, so a
 //! provider-level list could only ever be their union — true of the host and
 //! false of every model under it.
+//!
+//! Which WIRE FORMAT is spoken is the model's too, by the same argument and
+//! one step further: an [`Api`] names its own protocol, so a provider-level
+//! field could only restate what every surface under it already says, or
+//! contradict it. A host is free to serve one model over one protocol and its
+//! neighbour over another, and nothing here has to be taught that.
 //!
 //! These are READ SURFACES, not the YAML schema: `load` next door owns the
 //! schema and does the settling, which is why nothing here is an `Option`
@@ -29,7 +34,7 @@
 
 use std::collections::HashMap;
 
-use crate::types::{Api, Protocol};
+use crate::types::Api;
 
 /// The resolved roster: providers, and every routable `model_str` under them.
 ///
@@ -45,18 +50,16 @@ pub(crate) struct Registry {
     pub(crate) models: HashMap<String, ModelSpec>,
 }
 
-/// One provider: where its API is, how to authenticate, and what protocol it
-/// speaks.
+/// One provider: where its API is, and how to authenticate.
 ///
 /// Transport, and nothing else. Everything here is true of every model the
 /// provider serves, which is what keeps it stated exactly once — and it is why
-/// what a model can DO is not here.
+/// what a model can DO, and which wire format that is spoken in, are not here.
 #[derive(Debug, Clone)]
 pub struct ProviderSpec {
     pub(crate) name: String,
     pub(crate) base_url: String,
     pub(crate) env_api_key: Option<String>,
-    pub(crate) protocol: Protocol,
 }
 
 impl ProviderSpec {
@@ -82,11 +85,6 @@ impl ProviderSpec {
     /// variable nothing reads.
     pub fn env_api_key(&self) -> Option<&str> {
         self.env_api_key.as_deref()
-    }
-
-    /// The wire format this provider speaks.
-    pub fn protocol(&self) -> Protocol {
-        self.protocol
     }
 }
 
@@ -128,7 +126,8 @@ impl ModelSpec {
     ///
     /// Each names its protocol as well as its surface, so a model answering
     /// the same idea in two wire formats lists both and nothing has to decide
-    /// they are the same thing.
+    /// they are the same thing. It is also the only place the roster records a
+    /// wire format at all.
     pub fn supported_apis(&self) -> &[SupportedApi] {
         &self.supported_apis
     }
@@ -161,7 +160,7 @@ impl ModelSpec {
 /// One entry in a model's `supported_apis`: a surface it serves, and what the
 /// roster records about serving it.
 ///
-/// Written `- {api: openai_chat_completions}`. The surface is a field rather
+/// Written `- {api: openai_compat_chat_completions}`. The surface is a field rather
 /// than the entry's own shape, and that is the whole design: a field added here
 /// belongs to EVERY surface at once. `input_modalities` recorded per-surface
 /// would otherwise mean three payload types to add it to and keep in step, with

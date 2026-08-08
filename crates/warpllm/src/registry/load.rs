@@ -16,7 +16,6 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use super::types::{Capabilities, ModelSpec, ProviderSpec, Registry, SupportedApi};
-use crate::types::Protocol;
 
 /// The whole roster: providers, each holding the models routable under it.
 ///
@@ -31,16 +30,20 @@ struct RegistryFile {
     providers: HashMap<String, ProviderEntry>,
 }
 
-/// One provider as written. Everything but `env_api_key` and `models` is
-/// required: there is no inheritance and so nowhere else a value could come
-/// from, which is what lets serde report a missing one against the line it is
-/// missing from.
+/// One provider as written: transport only. Everything but `env_api_key` and
+/// `models` is required: there is no inheritance and so nowhere else a value
+/// could come from, which is what lets serde report a missing one against the
+/// line it is missing from.
+///
+/// `deny_unknown_fields` is what turns the retired `protocol:` line into an
+/// error rather than a silently ignored one — a surface names its own protocol
+/// now, and a roster still recording it per provider is stale rather than
+/// merely verbose.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProviderEntry {
     base_url: String,
     env_api_key: Option<String>,
-    protocol: Protocol,
     /// `Option`, and defaulted, so that both ways of writing "no models yet" —
     /// omitting the key and leaving it empty — reach the lint, which says what
     /// is wrong with that in its own words. Neither is a load failure, because
@@ -81,7 +84,6 @@ pub(super) fn load(yaml: &str) -> Result<Registry, String> {
         let ProviderEntry {
             base_url,
             env_api_key,
-            protocol,
             models,
         } = entry;
         for (key, model) in models.unwrap_or_default() {
@@ -94,7 +96,6 @@ pub(super) fn load(yaml: &str) -> Result<Registry, String> {
                 name,
                 base_url,
                 env_api_key,
-                protocol,
             },
         );
     }
@@ -210,7 +211,6 @@ mod tests {
         assert_eq!(provider.name(), "demo");
         assert_eq!(provider.base_url(), "https://api.demo.test/v1");
         assert_eq!(provider.env_api_key(), Some("DEMO_API_KEY"));
-        assert_eq!(provider.protocol(), Protocol::OpenAiCompat);
         for key in ["demo/one", "demo/two"] {
             assert_eq!(registry.models.get(key).unwrap().provider, "demo");
         }
@@ -270,17 +270,17 @@ mod tests {
         let registry = clean(&with(concat!(
             "      demo/plain:\n",
             "        supported_apis:\n",
-            "          - {api: openai_chat_completions}\n",
-            "          - {api: openai_responses}\n",
+            "          - {api: openai_compat_chat_completions}\n",
+            "          - {api: openai_compat_responses}\n",
         )));
         assert_eq!(
             registry.models.get("demo/plain").unwrap().supported_apis(),
             [
                 SupportedApi {
-                    api: Api::OpenAiChatCompletions
+                    api: Api::OpenAiCompatChatCompletions
                 },
                 SupportedApi {
-                    api: Api::OpenAiResponses
+                    api: Api::OpenAiCompatResponses
                 },
             ]
         );
@@ -293,22 +293,22 @@ mod tests {
         let registry = clean(&with(concat!(
             "      demo/chat-only:\n",
             "        supported_apis:\n",
-            "          - {api: openai_chat_completions}\n",
+            "          - {api: openai_compat_chat_completions}\n",
             "      demo/responses-only:\n",
             "        supported_apis:\n",
-            "          - {api: openai_responses}\n",
+            "          - {api: openai_compat_responses}\n",
         )));
         let apis = |key| registry.models.get(key).unwrap().supported_apis().to_vec();
         assert_eq!(
             apis("demo/chat-only"),
             [SupportedApi {
-                api: Api::OpenAiChatCompletions
+                api: Api::OpenAiCompatChatCompletions
             }]
         );
         assert_eq!(
             apis("demo/responses-only"),
             [SupportedApi {
-                api: Api::OpenAiResponses
+                api: Api::OpenAiCompatResponses
             }]
         );
         // The one that does not serve chat completions says so by not holding
@@ -318,7 +318,7 @@ mod tests {
                 .models
                 .get("demo/responses-only")
                 .unwrap()
-                .supports_api(Api::OpenAiChatCompletions)
+                .supports_api(Api::OpenAiCompatChatCompletions)
         );
     }
 
@@ -334,16 +334,25 @@ mod tests {
 
     /// The closed vocabulary, at the level that writes it. A typo cannot load,
     /// so it never reaches a live provider as a 404.
+    ///
+    /// Aimed at the surface's PREVIOUS spelling, which is the misspelling a
+    /// roster is most likely to carry: the protocol prefix moved from the
+    /// provider's own `protocol:` line into the surface name, so `openai_…`
+    /// became `openai_compat_…` and a stale entry says the old thing. The
+    /// message has to name the new vocabulary, which is the migration.
     #[test]
     fn a_misspelled_surface_is_rejected() {
         let err = load(&with(
-            "      demo/plain:\n        supported_apis:\n          - {api: chat_completions}\n",
+            "      demo/plain:\n        supported_apis:\n          - {api: openai_chat_completions}\n",
         ))
         .unwrap_err();
-        assert!(err.contains("unknown variant `chat_completions`"), "{err}");
+        assert!(
+            err.contains("unknown variant `openai_chat_completions`"),
+            "{err}"
+        );
         // The message names the vocabulary, so the line can be fixed without
         // opening `types.rs`.
-        assert!(err.contains("openai_chat_completions"), "{err}");
+        assert!(err.contains("openai_compat_chat_completions"), "{err}");
     }
 
     /// An entry is a map, and `api` is the key it must carry. Leaving it out
@@ -368,7 +377,7 @@ mod tests {
         let err = load(&with(concat!(
             "      demo/plain:\n",
             "        supported_apis:\n",
-            "          - api: openai_chat_completions\n",
+            "          - api: openai_compat_chat_completions\n",
             "            input_modalities: [text]\n",
         )))
         .unwrap_err();
@@ -382,10 +391,10 @@ mod tests {
     #[test]
     fn an_entry_reads_the_same_written_inline_or_as_a_block() {
         let inline = clean(&with(
-            "      demo/plain:\n        supported_apis:\n          - {api: openai_chat_completions}\n",
+            "      demo/plain:\n        supported_apis:\n          - {api: openai_compat_chat_completions}\n",
         ));
         let block = clean(&with(
-            "      demo/plain:\n        supported_apis:\n          - api: openai_chat_completions\n",
+            "      demo/plain:\n        supported_apis:\n          - api: openai_compat_chat_completions\n",
         ));
         assert_eq!(
             inline.models.get("demo/plain").unwrap().supported_apis(),
@@ -441,11 +450,23 @@ mod tests {
     // Nothing below leaves a correct pair of tables to build, so each is
     // rejected.
 
+    /// `protocol:` was a provider field until a surface started naming its own.
+    /// A roster still carrying it is stale, not merely verbose, and has to hear
+    /// so: silently ignoring the line would leave a fork believing it still
+    /// chose the wire format, right up until it wrote one the surfaces
+    /// contradict.
     #[test]
-    fn unknown_protocols_are_rejected() {
-        let err = load(&with("").replace("openai_compat", "anthropic")).unwrap_err();
-        assert!(err.contains("unknown variant"), "{err}");
-        assert!(err.contains("openai_compat"), "{err}");
+    fn a_stale_protocol_field_is_rejected() {
+        let stale = with(&model("demo/plain")).replace(
+            "    env_api_key: DEMO_API_KEY\n",
+            "    env_api_key: DEMO_API_KEY\n    protocol: openai_compat\n",
+        );
+        let err = load(&stale).unwrap_err();
+        assert!(err.contains("unknown field"), "{err}");
+        assert!(err.contains("protocol"), "{err}");
+        // The surviving fields are named, so the fix is to delete the line
+        // rather than to go looking for what replaced it.
+        assert!(err.contains("base_url"), "{err}");
     }
 
     #[test]
@@ -475,18 +496,15 @@ mod tests {
         assert!(err.contains("demo/plain"), "{err}");
     }
 
-    /// The accessors read these without a fallback, and with no inheritance
-    /// left there is nowhere else they could come from — so a provider missing
-    /// one has no spec to build.
+    /// The accessors read this without a fallback, and with no inheritance
+    /// left there is nowhere else it could come from — so a provider missing
+    /// it has no spec to build. `base_url` is the only required provider field
+    /// there is now that a surface names its own protocol.
     #[test]
     fn a_missing_provider_field_is_rejected() {
-        for field in ["base_url", "protocol"] {
-            let err = load(&format!("{}{}", without(field), model("demo/plain"))).unwrap_err();
-            assert!(
-                err.contains("missing field") && err.contains(field),
-                "removing {field} gave: {err}"
-            );
-        }
+        let err = load(&format!("{}{}", without("base_url"), model("demo/plain"))).unwrap_err();
+        assert!(err.contains("missing field"), "{err}");
+        assert!(err.contains("base_url"), "{err}");
     }
 
     /// The key is the whole string a caller routes with. A bare name under a
