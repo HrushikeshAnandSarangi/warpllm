@@ -29,7 +29,7 @@ pub(crate) async fn chat_completions(State(state): State<AppState>, body: Bytes)
         "chat completion request"
     );
     // `stream: true` is rejected inside the client as NotImplemented → 501.
-    match state.client.chat_completion(request).await {
+    match state.client.chat_completions(request).await {
         Ok(completion) => Json(completion).into_response(),
         Err(e) => error_response(&e),
     }

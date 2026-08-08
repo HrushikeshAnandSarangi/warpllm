@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use crate::config::{ClientConfig, DEFAULT_TIMEOUT_SECS};
+use crate::credentials::Credentials;
 use crate::error::{Error, Result};
 use crate::gateway::openai_compat;
 use crate::protocol::openai_compat::chat_completions::types::{
@@ -14,12 +15,17 @@ use crate::types::{Api, Protocol};
 pub struct Client {
     http: reqwest::Client,
     config: ClientConfig,
+    credentials: Credentials,
 }
 
 impl Client {
-    /// API keys resolve at request time from the routed provider's env var
-    /// (e.g. `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`), so constructing a
-    /// client never requires credentials.
+    /// Reads the environment once and keeps the providers it can authenticate.
+    ///
+    /// Constructing a client still never *requires* credentials: an environment
+    /// holding none builds a client that reaches no provider, and each request
+    /// says which variable it wanted. What construction does is answer that
+    /// question up front, so it can be logged at the moment a caller is set up
+    /// to read it rather than discovered one failed request at a time.
     pub fn new(config: ClientConfig) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(
@@ -27,10 +33,21 @@ impl Client {
             ))
             .build()
             .map_err(|e| Error::Internal(e.to_string()))?;
-        Ok(Self { http, config })
+        Ok(Self {
+            http,
+            config,
+            credentials: Credentials::from_env(),
+        })
     }
 
-    pub async fn chat_completion(
+    /// Serves one OpenAI-compatible chat completion.
+    ///
+    /// A request is admitted only when BOTH halves hold: the roster registers
+    /// the model, and this client holds a key for the provider serving it. They
+    /// are checked in that order deliberately — a name nothing registers is a
+    /// typo, and hearing "set `DEEPSEEK_API_KEY`" for `deepseek/typo` would send
+    /// someone after a credential they already have.
+    pub async fn chat_completions(
         &self,
         request: CreateChatCompletionRequest,
     ) -> Result<CreateChatCompletionResponse> {
@@ -38,6 +55,7 @@ impl Client {
             return Err(Error::NotImplemented("streaming"));
         }
         let requested_model = request.model.clone();
+        // Half one: the roster. Closed, so an unregistered name stops here.
         let (provider, model) = fetch_model(&requested_model)?;
         if !provider.supports_api(Api::ChatCompletions) {
             return Err(Error::InvalidInput(format!(
@@ -46,6 +64,8 @@ impl Client {
                 requested_model
             )));
         }
+        // Half two: this client. A registered model whose provider was not
+        // authenticated at construction never reaches the network.
         let api_key = self.api_key(provider)?;
 
         // Ingest answers to the protocol warpllm was CALLED with, which is
@@ -63,7 +83,7 @@ impl Client {
                     &self.http,
                     provider.name(),
                     self.base_url(provider),
-                    &api_key,
+                    api_key,
                 )
                 .await?
             }
@@ -75,17 +95,19 @@ impl Client {
         Ok(completion)
     }
 
-    /// The routed provider's own environment variable, read at request time.
-    /// The environment is the only source: a provider with no `env_api_key`
-    /// therefore has none at all, and the error names the roster rather than a
-    /// variable that does not exist.
-    fn api_key(&self, provider: &'static ProviderSpec) -> Result<String> {
-        let env_var = provider.env_api_key();
-        env_var
-            .and_then(|var| std::env::var(var).ok())
+    /// The routed provider's key, from the snapshot this client took of the
+    /// environment when it was built.
+    ///
+    /// A miss is not "the variable is unset now" but "it was unset then", and
+    /// the error still names the variable to set, because that is the remedy
+    /// either way. A provider with no `env_api_key` has no key source at all,
+    /// so the error names the roster rather than a variable nothing reads.
+    fn api_key(&self, provider: &'static ProviderSpec) -> Result<&str> {
+        self.credentials
+            .get(provider.name())
             .ok_or(Error::MissingApiKey {
                 provider: provider.name(),
-                env_var,
+                env_var: provider.env_api_key(),
             })
     }
 
@@ -102,8 +124,18 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credentials::with_env;
     use crate::protocol::openai_compat::chat_completions::types::ChatCompletionRequestMessage;
     use crate::registry::{Capabilities, ModelSpec};
+
+    /// A client built under the environment lock.
+    ///
+    /// `Client::new` reads the environment, so every construction in this
+    /// binary has to hold temp-env's lock even when the test has no opinion
+    /// about what is set — see [`with_env`] for why.
+    fn client(config: ClientConfig) -> Client {
+        with_env(&[], || Client::new(config).unwrap())
+    }
 
     /// The two halves the client works from, for a model the shipped roster
     /// does have.
@@ -128,8 +160,7 @@ mod tests {
     /// variable nothing reads.
     #[test]
     fn a_provider_with_no_env_api_key_names_the_roster() {
-        let err = Client::new(ClientConfig::default())
-            .unwrap()
+        let err = client(ClientConfig::default())
             .api_key(demo_provider("https://api.demo.test", None))
             .unwrap_err();
         match &err {
@@ -191,7 +222,7 @@ mod tests {
             model: "demo-chat-20240101".into(),
             capabilities: Capabilities::blank(),
         }));
-        let client = Client::new(ClientConfig::default()).unwrap();
+        let client = client(ClientConfig::default());
         let request = CreateChatCompletionRequest {
             model: "demo/chat".into(),
             messages: vec![ChatCompletionRequestMessage {
@@ -201,7 +232,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        // What `chat_completion` does, minus the routing it already proved:
+        // What `chat_completions` does, minus the routing it already proved:
         // the SPEC's model name is what ingest is handed.
         let normalized =
             openai_compat::api::chat_completions::ingest_request(request, aliased.model());
@@ -247,11 +278,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = Client::new(ClientConfig {
+        let client = client(ClientConfig {
             base_url: Some(server.uri()),
             ..Default::default()
-        })
-        .unwrap();
+        });
         let request = CreateChatCompletionRequest {
             model: "openai/gpt-5.6".into(),
             messages: vec![ChatCompletionRequestMessage {
@@ -281,7 +311,7 @@ mod tests {
 
     #[test]
     fn base_url_defaults_to_each_providers_api() {
-        let client = Client::new(ClientConfig::default()).unwrap();
+        let client = client(ClientConfig::default());
         assert_eq!(
             client.base_url(pair_for("openai/gpt-5.6").0),
             "https://api.openai.com/v1"
@@ -294,11 +324,10 @@ mod tests {
 
     #[test]
     fn configured_base_url_wins_over_the_default() {
-        let client = Client::new(ClientConfig {
+        let client = client(ClientConfig {
             base_url: Some("http://localhost:9999".into()),
             ..Default::default()
-        })
-        .unwrap();
+        });
         assert_eq!(
             client.base_url(pair_for("openai/gpt-5.6").0),
             "http://localhost:9999"

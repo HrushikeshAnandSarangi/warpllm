@@ -80,6 +80,20 @@ pub fn fetch_model(model_str: &str) -> Result<(&'static ProviderSpec, &'static M
     })
 }
 
+/// Every provider on the roster, in no particular order.
+///
+/// Unlike [`fetch_model`] this answers a question about the ROSTER rather than
+/// about one request: which providers exist at all, so that something can be
+/// worked out per provider before any model is named. The client uses it once,
+/// at construction, to find which providers the environment can authenticate.
+///
+/// Not public. A caller reaches a provider through the model it serves, and
+/// handing out the whole roster would make the shipped list an API that could
+/// not gain an entry without a semver argument.
+pub(crate) fn providers() -> impl Iterator<Item = &'static ProviderSpec> {
+    REGISTRY.providers.values()
+}
+
 /// Whether the roster holds a provider under this exact name.
 ///
 /// Test-only, and that is the point: nothing at runtime should reach a
@@ -202,6 +216,7 @@ mod tests {
             vec![
                 "deepseek/deepseek-v4-flash",
                 "deepseek/deepseek-v4-pro",
+                "openai/gpt-5-nano",
                 "openai/gpt-5.6",
                 "openai/gpt-5.6-luna",
                 "openai/gpt-5.6-sol",

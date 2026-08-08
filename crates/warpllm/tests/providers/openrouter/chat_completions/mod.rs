@@ -40,7 +40,7 @@ fn openrouter_happy_path() {
             .await;
 
         let completion = client_for(&server)
-            .chat_completion(request("openrouter/anthropic/claude-sonnet-4"))
+            .chat_completions(request("openrouter/anthropic/claude-sonnet-4"))
             .await
             .unwrap();
 
@@ -73,7 +73,7 @@ fn openrouter_extensions_round_trip_to_the_caller() {
             .await;
 
         let completion = client_for(&server)
-            .chat_completion(request("openrouter/anthropic/claude-sonnet-4"))
+            .chat_completions(request("openrouter/anthropic/claude-sonnet-4"))
             .await
             .unwrap();
 
@@ -109,7 +109,7 @@ fn openrouter_forwards_params_for_the_provider_to_judge() {
         req.unknown_fields
             .insert("provider".into(), json!("StreamLake"));
         req.unknown_fields.insert("route".into(), json!("fallback"));
-        client_for(&server).chat_completion(req).await.unwrap();
+        client_for(&server).chat_completions(req).await.unwrap();
 
         let sent: serde_json::Value =
             serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
@@ -134,7 +134,7 @@ fn openrouter_errors_name_openrouter() {
             .await;
 
         let err = client_for(&server)
-            .chat_completion(request("openrouter/anthropic/claude-sonnet-4"))
+            .chat_completions(request("openrouter/anthropic/claude-sonnet-4"))
             .await
             .unwrap_err();
 
@@ -156,7 +156,7 @@ fn openrouter_unlisted_slugs_are_rejected() {
         let client = client_for(&server);
 
         let err = client
-            .chat_completion(request("openrouter/anthropic/claude-3.5-sonnet"))
+            .chat_completions(request("openrouter/anthropic/claude-3.5-sonnet"))
             .await
             .unwrap_err();
         assert!(

@@ -14,6 +14,7 @@ categories = ["api-bindings", "web-programming"]
 tokio.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
+tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 yaml_serde.workspace = true
@@ -28,3 +29,6 @@ codegen = ["dep:ts-rs", "dep:schemars"]
 [dev-dependencies]
 wiremock = "0.6"
 temp-env = "0.3"
+# Examples only. warpllm emits `tracing` events and installs no subscriber of
+# its own; the quickstart shows a caller opting in to see them.
+tracing-subscriber.workspace = true

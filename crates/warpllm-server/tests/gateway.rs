@@ -13,20 +13,37 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// [`with_gateway_key`] — the client's only key source.
 const GATEWAY_KEY: &str = "sk-gateway";
 
-/// Runs `body` with the provider key in the environment.
+/// Runs `body` holding temp-env's lock, with `OPENAI_API_KEY` set to `key`.
 ///
-/// Only the tests that actually reach the upstream need this: everything else
-/// here fails before key resolution (bad route, `stream: true`, unknown model),
-/// so they stay `#[tokio::test]` and keep running in parallel.
+/// EVERY test in this binary goes through this, including the ones that never
+/// reach the upstream. Building a gateway READS the environment — `Client::new`
+/// resolves its providers once, up front — so a test that sets nothing is still
+/// a reader, and a reader running beside a writer is the data race that made
+/// `set_var` unsafe in edition 2024. Only a shared lock rules it out.
 ///
-/// Env mutation is process-global and `unsafe` since edition 2024, hence
-/// temp-env's locking helper and a runtime per test rather than
-/// `async_with_vars`, which cannot hold the lock across an await.
-fn with_gateway_key<F: Future<Output = ()>>(body: F) {
+/// These used to split: key-reading tests took the lock and the rest stayed
+/// `#[tokio::test]` for parallelism, which was sound while keys resolved at
+/// request time and nothing else touched the environment. It stopped being
+/// sound the moment construction started reading.
+///
+/// A runtime per test rather than `#[tokio::test]` because `async_with_vars`
+/// cannot hold the lock across an await.
+fn with_env<F: Future<Output = ()>>(key: Option<&str>, body: F) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    temp_env::with_var("OPENAI_API_KEY", Some(GATEWAY_KEY), || {
-        runtime.block_on(body)
-    });
+    temp_env::with_var("OPENAI_API_KEY", key, || runtime.block_on(body));
+}
+
+/// The gateway holding its provider key, for the tests that reach upstream.
+fn with_gateway_key<F: Future<Output = ()>>(body: F) {
+    with_env(Some(GATEWAY_KEY), body);
+}
+
+/// No provider key at all, for the tests that must fail before key resolution
+/// (bad route, `stream: true`, unknown model, health). Proving that from an
+/// environment where the key is ABSENT is a stronger claim than proving it from
+/// one where the key merely went unused.
+fn without_key<F: Future<Output = ()>>(body: F) {
+    with_env(None, body);
 }
 
 /// Serves the gateway against the given upstream, returning its base URL.
@@ -100,18 +117,20 @@ fn non_stream_happy_path_uses_gateway_key_and_echoes_model() {
     });
 }
 
-#[tokio::test]
-async fn unprefixed_route_is_404() {
-    let upstream = MockServer::start().await;
-    let gateway = spawn_app(&upstream.uri()).await;
+#[test]
+fn unprefixed_route_is_404() {
+    without_key(async {
+        let upstream = MockServer::start().await;
+        let gateway = spawn_app(&upstream.uri()).await;
 
-    let response = reqwest::Client::new()
-        .post(format!("{gateway}/chat/completions"))
-        .json(&request_body())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 404);
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/chat/completions"))
+            .json(&request_body())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404);
+    });
 }
 
 #[test]
@@ -225,117 +244,130 @@ fn quota_exhaustion_is_not_reported_as_a_rate_limit() {
     });
 }
 
-#[tokio::test]
-async fn stream_requests_are_501_before_upstream() {
-    let upstream = MockServer::start().await;
-    Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
-        .mount(&upstream)
-        .await;
-    let gateway = spawn_app(&upstream.uri()).await;
+#[test]
+fn stream_requests_are_501_before_upstream() {
+    without_key(async {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&upstream)
+            .await;
+        let gateway = spawn_app(&upstream.uri()).await;
 
-    let mut body = request_body();
-    body["stream"] = json!(true);
-    let response = reqwest::Client::new()
-        .post(format!("{gateway}/v1/chat/completions"))
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 501);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["error"]["code"], "not_implemented");
+        let mut body = request_body();
+        body["stream"] = json!(true);
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/v1/chat/completions"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 501);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "not_implemented");
+    });
 }
 
-#[tokio::test]
-async fn invalid_model_and_invalid_json_are_400s() {
-    let upstream = MockServer::start().await;
-    let gateway = spawn_app(&upstream.uri()).await;
-    let client = reqwest::Client::new();
+#[test]
+fn invalid_model_and_invalid_json_are_400s() {
+    without_key(async {
+        let upstream = MockServer::start().await;
+        let gateway = spawn_app(&upstream.uri()).await;
+        let client = reqwest::Client::new();
 
-    let response = client
-        .post(format!("{gateway}/v1/chat/completions"))
-        .json(&json!({"model": "gpt-5.6", "messages": []}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 400);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["error"]["code"], "invalid_request");
-    assert_eq!(body["error"]["origin"], "gateway");
-    assert!(
-        body["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("no registered model spec")
-    );
+        // An unregistered name is rejected by the roster, which is checked
+        // before credentials — so this stays a 400 about the model even with
+        // no key in the environment, rather than becoming a 401.
+        let response = client
+            .post(format!("{gateway}/v1/chat/completions"))
+            .json(&json!({"model": "gpt-5.6", "messages": []}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "invalid_request");
+        assert_eq!(body["error"]["origin"], "gateway");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("no registered model spec")
+        );
 
-    let response = client
-        .post(format!("{gateway}/v1/chat/completions"))
-        .header("content-type", "application/json")
-        .body("not json")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 400);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["error"]["code"], "invalid_request");
-    assert_eq!(body["error"]["origin"], "gateway");
+        let response = client
+            .post(format!("{gateway}/v1/chat/completions"))
+            .header("content-type", "application/json")
+            .body("not json")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "invalid_request");
+        assert_eq!(body["error"]["origin"], "gateway");
+    });
 }
 
 /// Exercises the `serve` entry point the binary and bindings share: boots
 /// on a free port, answers `/health`, and exits cleanly on shutdown.
-#[tokio::test]
-async fn serve_boots_answers_health_and_shuts_down_gracefully() {
-    // Reserve a free port, then release it for serve to claim. Racy in
-    // principle, harmless in practice for a test.
-    let port = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let config = warpllm_server::config::ServerConfig {
-        host: "127.0.0.1".into(),
-        port,
-        timeout_secs: 5,
-    };
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = tokio::spawn(warpllm_server::serve(config, async {
-        shutdown_rx.await.ok();
-    }));
+#[test]
+fn serve_boots_answers_health_and_shuts_down_gracefully() {
+    // `serve` builds the client itself, so this reads the environment too —
+    // and boots with no providers, which is not an error.
+    without_key(async {
+        // Reserve a free port, then release it for serve to claim. Racy in
+        // principle, harmless in practice for a test.
+        let port = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let config = warpllm_server::config::ServerConfig {
+            host: "127.0.0.1".into(),
+            port,
+            timeout_secs: 5,
+        };
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(warpllm_server::serve(config, async {
+            shutdown_rx.await.ok();
+        }));
 
-    let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{port}/health");
-    let mut health = None;
-    for _ in 0..50 {
-        match client.get(&url).send().await {
-            Ok(response) => {
-                health = Some(response);
-                break;
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{port}/health");
+        let mut health = None;
+        for _ in 0..50 {
+            match client.get(&url).send().await {
+                Ok(response) => {
+                    health = Some(response);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
             }
-            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
         }
-    }
-    assert_eq!(health.expect("server came up").status(), 200);
+        assert_eq!(health.expect("server came up").status(), 200);
 
-    shutdown_tx.send(()).unwrap();
-    server.await.unwrap().unwrap();
+        shutdown_tx.send(()).unwrap();
+        server.await.unwrap().unwrap();
+    });
 }
 
-#[tokio::test]
-async fn health_reports_ok() {
-    let upstream = MockServer::start().await;
-    let gateway = spawn_app(&upstream.uri()).await;
+#[test]
+fn health_reports_ok() {
+    without_key(async {
+        let upstream = MockServer::start().await;
+        let gateway = spawn_app(&upstream.uri()).await;
 
-    let response = reqwest::Client::new()
-        .get(format!("{gateway}/health"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 200);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "ok");
-    assert_eq!(body["version"], warpllm::version());
+        let response = reqwest::Client::new()
+            .get(format!("{gateway}/health"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["version"], warpllm::version());
+    });
 }

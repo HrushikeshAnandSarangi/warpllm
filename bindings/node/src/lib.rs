@@ -29,10 +29,10 @@ impl Client {
     }
 
     #[napi]
-    pub async fn chat_completion(&self, request_json: String) -> napi::Result<String> {
+    pub async fn chat_completions(&self, request_json: String) -> napi::Result<String> {
         let client = self.inner.clone();
         client
-            .chat_completion(&request_json)
+            .chat_completions(&request_json)
             .await
             .map_err(wire_err)
     }

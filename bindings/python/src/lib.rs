@@ -21,7 +21,7 @@ async fn run_chat(
     request_json: String,
 ) -> Result<String, String> {
     client
-        .chat_completion(&request_json)
+        .chat_completions(&request_json)
         .await
         .map_err(|error| error.to_openai_json())
 }
@@ -45,7 +45,7 @@ impl Client {
     /// Blocks on the shared tokio runtime with the GIL released — no
     /// `asyncio.run` involved, so this works inside notebooks and scripts
     /// alike and reuses pooled connections across calls.
-    fn chat_completion(&self, py: Python<'_>, request_json: String) -> PyResult<String> {
+    fn chat_completions(&self, py: Python<'_>, request_json: String) -> PyResult<String> {
         let client = self.inner.clone();
         py.detach(move || {
             pyo3_async_runtimes::tokio::get_runtime()
@@ -54,7 +54,7 @@ impl Client {
         })
     }
 
-    fn async_chat_completion<'p>(
+    fn async_chat_completions<'p>(
         &self,
         py: Python<'p>,
         request_json: String,

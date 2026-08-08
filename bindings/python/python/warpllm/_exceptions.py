@@ -15,7 +15,7 @@ class APIError(Exception):
     OpenAI would have said, whichever provider served the request::
 
         try:
-            client.chat_completion({"model": "deepseek/deepseek-chat", ...})
+            client.chat_completions({"model": "deepseek/deepseek-chat", ...})
         except RateLimitError as e:
             # A 429 covers two failures that need opposite handling. Waiting
             # fixes one of them; only `code` says which.

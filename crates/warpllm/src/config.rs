@@ -5,9 +5,10 @@ use serde::Deserialize;
 /// Matches the OpenAI SDK's default request timeout.
 pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
-/// Holds no API key. Credentials resolve at request time from the environment,
-/// once routing has picked a model and its spec names the variable to read — so
-/// a client is never asked up front for keys a given request will not use.
+/// Holds no API key. A client reads those from the environment itself when it
+/// is built, taking one variable per provider the roster names — so a client is
+/// never asked up front for keys it can find, nor for keys a given request will
+/// not use.
 ///
 /// The environment is deliberately the only source for now. Carrying keys here
 /// is this struct's job if an embedder that keeps them elsewhere turns up; until

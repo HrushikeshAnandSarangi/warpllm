@@ -25,7 +25,7 @@ fn deepseek_key_resolves_per_provider() {
             })
             .unwrap();
             client
-                .chat_completion(request("deepseek/deepseek-v4-flash"))
+                .chat_completions(request("deepseek/deepseek-v4-flash"))
                 .await
                 .unwrap();
         });
@@ -38,11 +38,26 @@ fn deepseek_key_resolves_per_provider() {
         ],
         || {
             runtime.block_on(async {
-                // 2. An OpenAI key must not satisfy DeepSeek: the missing
-                //    key errors at request time, naming DeepSeek's env var.
-                let client = Client::new(ClientConfig::default()).unwrap();
+                // 2. An OpenAI key must not satisfy DeepSeek. The model IS
+                //    registered, so the roster admits it and only the second
+                //    gate — the providers this client authenticated when it was
+                //    built — can reject it. The mock would answer 200 to
+                //    anything, so a request reaching it means the gate opened
+                //    on a provider warpllm holds no key for.
+                let server = MockServer::start().await;
+                Mock::given(method("POST"))
+                    .respond_with(
+                        ResponseTemplate::new(200).set_body_json(openai_completion_body()),
+                    )
+                    .mount(&server)
+                    .await;
+                let client = Client::new(ClientConfig {
+                    base_url: Some(server.uri()),
+                    ..Default::default()
+                })
+                .unwrap();
                 let err = client
-                    .chat_completion(request("deepseek/deepseek-v4-flash"))
+                    .chat_completions(request("deepseek/deepseek-v4-flash"))
                     .await
                     .unwrap_err();
                 match err {
@@ -52,6 +67,10 @@ fn deepseek_key_resolves_per_provider() {
                     }
                     other => panic!("expected MissingApiKey, got {other:?}"),
                 }
+                assert!(
+                    server.received_requests().await.unwrap().is_empty(),
+                    "a provider with no key was still sent a request"
+                );
             });
         },
     );

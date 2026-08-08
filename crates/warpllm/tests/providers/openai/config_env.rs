@@ -25,7 +25,7 @@ fn env_api_key_with_override_and_missing_key() {
             })
             .unwrap();
             client
-                .chat_completion(request("openai/gpt-5.6"))
+                .chat_completions(request("openai/gpt-5.6"))
                 .await
                 .unwrap();
         });
@@ -36,7 +36,7 @@ fn env_api_key_with_override_and_missing_key() {
             // 2. Missing key errors at request time, naming the env var.
             let client = Client::new(ClientConfig::default()).unwrap();
             let err = client
-                .chat_completion(request("openai/gpt-5.6"))
+                .chat_completions(request("openai/gpt-5.6"))
                 .await
                 .unwrap_err();
             match err {

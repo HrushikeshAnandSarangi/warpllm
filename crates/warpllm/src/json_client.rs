@@ -23,10 +23,10 @@ impl JsonClient {
         })
     }
 
-    pub async fn chat_completion(&self, request_json: &str) -> Result<String> {
+    pub async fn chat_completions(&self, request_json: &str) -> Result<String> {
         let request = serde_json::from_str(request_json)
             .map_err(|error| Error::InvalidInput(error.to_string()))?;
-        let response = self.inner.chat_completion(request).await?;
+        let response = self.inner.chat_completions(request).await?;
         serde_json::to_string(&response).map_err(|error| Error::Internal(error.to_string()))
     }
 }

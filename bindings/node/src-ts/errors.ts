@@ -12,7 +12,7 @@ import type { ErrorBody, ErrorClass, OpenAiError } from './generated/types.js'
  *
  * ```ts
  * try {
- *   await client.chatCompletion({ model: 'deepseek/deepseek-chat', messages })
+ *   await client.chatCompletions({ model: 'deepseek/deepseek-chat', messages })
  * } catch (err) {
  *   if (err instanceof RateLimitError) {
  *     // A 429 covers two failures that need opposite handling. Waiting fixes
