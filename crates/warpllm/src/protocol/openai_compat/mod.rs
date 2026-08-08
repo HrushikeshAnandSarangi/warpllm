@@ -1,6 +1,8 @@
-//! The OpenAI-compatible protocol: every provider whose spec selects
-//! `Protocol::OpenAiCompat` is spoken through here, parameterized by the
-//! provider's name, base URL, and key.
+//! The OpenAI-compatible protocol: every model whose roster entry lists an
+//! `openai_compat_*` surface is served through here, parameterized by its
+//! provider's name, base URL, and key. A surface names the protocol it is
+//! spoken in, so listing one is what selects this module — a provider entry
+//! chooses nothing.
 //!
 //! `openai_compat` is warpllm's OpenAI-*compatible* protocol: a permissive
 //! superset (unknown-field passthrough) of the OpenAI request, which many

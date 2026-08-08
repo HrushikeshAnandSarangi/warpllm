@@ -153,8 +153,8 @@ fn ingest_message(message: ChatCompletionResponseMessage) -> types::Message {
 /// the provider said; the block is what it means.
 ///
 /// `provenance` records the protocol rather than a hand-written identifier:
-/// [`Protocol::as_str`] is one drift-tested string, so it cannot disagree with
-/// the namespace the same field is filed under.
+/// [`Protocol::as_str`] is the same one string the namespace is keyed by, so
+/// the two cannot disagree about where this field came from.
 fn reasoning_block(fields: &UnknownFields) -> Option<ContentBlock> {
     let text = fields
         .get("reasoning_content")?

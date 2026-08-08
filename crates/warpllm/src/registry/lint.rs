@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::load::load;
-use super::types::{ProviderSpec, Registry};
+use super::types::{ModelSpec, ProviderSpec, Registry};
 
 /// Every policy below, first failure reported.
 pub(super) fn check(yaml: &str) -> Result<(), String> {
@@ -38,6 +38,7 @@ pub(super) fn check(yaml: &str) -> Result<(), String> {
                  last segment"
             ));
         }
+        serves(spec).map_err(|e| format!("`{key}`: {e}"))?;
     }
     env_api_keys(&registry)
 }
@@ -162,18 +163,35 @@ fn routable(provider: &ProviderSpec) -> Result<(), String> {
                 .into(),
         );
     }
-    if provider.supported_apis().is_empty() {
-        return Err("supported_apis names no API, so nothing could ever route here".into());
+    Ok(())
+}
+
+/// A model's `supported_apis`: non-empty, and without repeats.
+///
+/// The list is the model's alone — nothing is inherited — so both of these are
+/// things only the roster's own text can get wrong.
+///
+/// There is deliberately no cross-check against the provider. A surface names
+/// the wire format it is spoken in, and the provider records none, so there is
+/// nothing left for the two to disagree about — which is the point: one host
+/// may serve one model over one protocol and its neighbour over another, and
+/// no roster rule has to be taught the exception.
+fn serves(spec: &ModelSpec) -> Result<(), String> {
+    if spec.supported_apis().is_empty() {
+        return Err(
+            "supported_apis is empty, so nothing could ever route to this model; \
+             name a surface it serves, or delete the entry"
+                .into(),
+        );
     }
-    // A provider can serve fewer APIs than its protocol defines, never one the
-    // protocol has never heard of. Naming an API that does not exist at all is
-    // caught earlier still, by `Api`'s own deserialization.
-    for api in provider.supported_apis() {
-        if !provider.protocol().apis().contains(api) {
-            return Err(format!(
-                "`{api:?}` is not an API of this protocol, which defines {:?}",
-                provider.protocol().apis()
-            ));
+    // On the surface, not the whole entry: two entries naming one surface are
+    // one mistake whether or not everything else about them matches, and only
+    // the first would ever be found by `supported_api`.
+    let mut seen = HashSet::new();
+    for entry in spec.supported_apis() {
+        let api = entry.api();
+        if !seen.insert(api) {
+            return Err(format!("`{api:?}` is listed twice"));
         }
     }
     Ok(())
@@ -206,14 +224,14 @@ fn env_api_keys(registry: &Registry) -> Result<(), String> {
 /// not.
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{OTHER_PROVIDER, PROVIDER, clean, with};
+    use super::super::testing::{CHAT, OTHER_PROVIDER, PROVIDER, clean, model, models, with};
     use super::*;
 
     /// One provider's roster, plus a second one that shares its variable.
     fn two_providers(env_api_key: &str) -> String {
         format!(
             "{}{}",
-            with("      demo/plain: {}\n"),
+            with(&model("demo/plain")),
             OTHER_PROVIDER.replace("OTHER_API_KEY", env_api_key)
         )
     }
@@ -255,7 +273,7 @@ mod tests {
     /// would send a request-time lookup of `""`.
     #[test]
     fn an_empty_env_api_key_points_at_omitting_it() {
-        let yaml = with("      demo/plain: {}\n").replace("DEMO_API_KEY", "\"\"");
+        let yaml = with(&model("demo/plain")).replace("DEMO_API_KEY", "\"\"");
         let err = check(&yaml).unwrap_err();
         assert!(err.contains("env_api_key is empty"), "{err}");
         assert!(err.contains("omit the field entirely"), "{err}");
@@ -270,11 +288,20 @@ mod tests {
     /// contributor fix the line without opening `protocol/types.rs`.
     #[test]
     fn an_api_outside_the_vocabulary_fails_to_load() {
-        let yaml =
-            with("      demo/plain: {}\n").replace("- chat_completions", "- chat_completion");
+        let yaml = with(&model("demo/plain")).replace(
+            "api: openai_compat_chat_completions",
+            "api: anthropic_messages",
+        );
         let err = load(&yaml).unwrap_err();
-        assert!(err.contains("unknown variant `chat_completion`"), "{err}");
-        for known in ["chat_completions", "chat_completions_stream", "responses"] {
+        assert!(
+            err.contains("unknown variant `anthropic_messages`"),
+            "{err}"
+        );
+        for known in [
+            "openai_compat_chat_completions",
+            "openai_compat_chat_completions_stream",
+            "openai_compat_responses",
+        ] {
             assert!(err.contains(known), "vocabulary missing {known}: {err}");
         }
         // `check` loads first, so it reports the same thing rather than some
@@ -290,15 +317,15 @@ mod tests {
     /// which is exactly why it must not stop the tables being built.
     #[test]
     fn out_of_order_models_are_rejected() {
-        let yaml = with("      demo/zeta: {}\n      demo/alpha: {}\n");
+        let yaml = with(&models(&["demo/zeta", "demo/alpha"]));
         assert!(load(&yaml).is_ok(), "key order cannot break loading");
         let err = check(&yaml).unwrap_err();
         // Names the map, the key to move, where to move it, and the ordering
         // it is judged against, so nobody has to work out what "unsorted"
         // meant.
         assert!(err.contains("`demo`'s models"), "{err}");
-        assert!(err.contains("`demo/alpha` (line 11)"), "{err}");
-        assert!(err.contains("move it above `demo/zeta` (line 10)"), "{err}");
+        assert!(err.contains("`demo/alpha` (line 9)"), "{err}");
+        assert!(err.contains("move it above `demo/zeta` (line 6)"), "{err}");
         assert!(err.contains("ascending BYTE order"), "{err}");
     }
 
@@ -310,8 +337,9 @@ mod tests {
     fn out_of_order_models_are_rejected_under_any_provider() {
         // `demo` above is in order; the misplaced key is in the LAST provider.
         let yaml = format!(
-            "{}{OTHER_PROVIDER}      other/alpha: {{}}\n",
-            with("      demo/plain: {}\n")
+            "{}{OTHER_PROVIDER}{}",
+            with(&model("demo/plain")),
+            model("other/alpha")
         );
         assert!(load(&yaml).is_ok(), "key order cannot break loading");
         let err = check(&yaml).unwrap_err();
@@ -323,7 +351,7 @@ mod tests {
     /// talking about.
     #[test]
     fn out_of_order_providers_are_rejected() {
-        let demo = with("      demo/plain: {}\n");
+        let demo = with(&model("demo/plain"));
         let demo = demo
             .strip_prefix("providers:\n")
             .expect("the fixture's first line");
@@ -339,9 +367,9 @@ mod tests {
     /// search gets wrong.
     #[test]
     fn the_order_error_points_at_the_right_line() {
-        let err = check(&with("      demo/model-x: {}\n      demo/model: {}\n")).unwrap_err();
-        assert!(err.contains("`demo/model` (line 11)"), "{err}");
-        assert!(err.contains("above `demo/model-x` (line 10)"), "{err}");
+        let err = check(&with(&models(&["demo/model-x", "demo/model"]))).unwrap_err();
+        assert!(err.contains("`demo/model` (line 9)"), "{err}");
+        assert!(err.contains("above `demo/model-x` (line 6)"), "{err}");
     }
 
     /// Both ways of writing "no models yet" load fine and are caught here,
@@ -356,34 +384,76 @@ mod tests {
     }
 
     /// Each of these loads into a spec that is well-formed and then cannot
-    /// serve a request: no credential, a URL that would double its slash, or
-    /// no surface at all.
+    /// serve a request: a URL that would double its slash, or a roster with
+    /// nothing in it at all.
     #[test]
     fn unroutable_providers_are_rejected() {
-        let models = "      demo/plain: {}\n";
-
-        let trailing = with(models).replace("api.demo.test/v1", "api.demo.test/v1/");
+        let trailing = with(&model("demo/plain")).replace("api.demo.test/v1", "api.demo.test/v1/");
         let err = check(&trailing).unwrap_err();
         assert!(err.contains("doubled slash"), "{err}");
 
-        // An EMPTY list is a lint failure; omitting the field entirely fails
-        // to load, since nothing else could answer it.
-        let empty = with(models).replace(
-            "    supported_apis:\n      - chat_completions\n      - responses\n",
-            "    supported_apis: []\n",
-        );
-        let err = check(&empty).unwrap_err();
-        assert!(err.contains("names no API"), "{err}");
-
         let err = check("providers: {}\n").unwrap_err();
         assert!(err.contains("names no providers"), "{err}");
+    }
+
+    /// Two models of one provider may serve entirely different surfaces, and
+    /// the lint has no opinion about it. This used to be checked against the
+    /// provider's own `protocol:`; with that gone there is nothing to agree
+    /// with, which is what lets one host serve a chat model beside a
+    /// Responses-only one.
+    #[test]
+    fn one_provider_may_serve_models_with_disjoint_surfaces() {
+        clean(&with(concat!(
+            "      demo/chat-only:\n",
+            "        supported_apis:\n",
+            "          - {api: openai_compat_chat_completions}\n",
+            "      demo/responses-only:\n",
+            "        supported_apis:\n",
+            "          - {api: openai_compat_responses}\n",
+        )));
+    }
+
+    /// The same surface twice is one mistake, however its settings are
+    /// written. Caught on the surface's identity, not on the payload, which
+    /// today is `{}` in both copies and would compare equal either way.
+    #[test]
+    fn a_repeated_surface_is_rejected() {
+        let yaml = with(concat!(
+            "      demo/plain:\n",
+            "        supported_apis:\n",
+            "          - {api: openai_compat_chat_completions}\n",
+            "          - {api: openai_compat_chat_completions}\n",
+        ));
+        assert!(
+            load(&yaml).is_ok(),
+            "the roster is what is wrong, not the tables"
+        );
+        let err = check(&yaml).unwrap_err();
+        assert!(err.contains("`demo/plain`"), "{err}");
+        assert!(err.contains("listed twice"), "{err}");
+    }
+
+    /// An empty list is a model nothing can route to. It loads — the tables
+    /// are fine — and the message says what to do, since an entry that serves
+    /// nothing is either missing a line or should not be there at all.
+    #[test]
+    fn a_model_serving_no_surface_is_rejected() {
+        let yaml = with("      demo/plain:\n        supported_apis: []\n");
+        assert!(load(&yaml).is_ok(), "the roster is what is wrong");
+        let err = check(&yaml).unwrap_err();
+        assert!(err.contains("`demo/plain`"), "{err}");
+        assert!(err.contains("supported_apis is empty"), "{err}");
+        assert!(err.contains("delete the entry"), "{err}");
     }
 
     /// An empty `model` would ship `"model": ""` upstream, which no provider
     /// serves. Omitting the field is how an entry says "use my key's name".
     #[test]
     fn an_empty_model_points_at_omitting_it() {
-        let err = check(&with("      demo/plain:\n        model: \"\"\n")).unwrap_err();
+        let err = check(&with(&format!(
+            "      demo/plain:\n{CHAT}        model: \"\"\n"
+        )))
+        .unwrap_err();
         assert!(err.contains("model is empty"), "{err}");
         assert!(err.contains("omit the field"), "{err}");
     }

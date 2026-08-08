@@ -70,9 +70,10 @@ impl RawJson {
 #[allow(dead_code)] // staged: read once the passthrough fast path lands
 pub(crate) struct IngestSource {
     /// The wire format this was ingested from. [`Protocol`] rather than an
-    /// enum of its own: the name that keys the `ext` bags, the name the
-    /// registry YAML uses, and the name of the format are one string, so they
-    /// are one type.
+    /// enum of its own: the name that keys the `ext` bags and the name of the
+    /// format are one string, so they are one type. The roster no longer
+    /// records a protocol at all — a surface names its own — so this is a tag
+    /// the ingesting module states about itself.
     pub protocol: Protocol,
     /// The inbound body as ingested — re-serialized from the typed wire
     /// form, NOT the original bytes: unknown-field order survives

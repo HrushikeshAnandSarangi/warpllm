@@ -77,10 +77,10 @@ crates/warpllm/          The SDK. Everything below is a module of this crate.
                          and receives, per wire format (not per provider).
   gateway/               warpllm's own request/response types, and the
                          conversions between them and the wire shapes.
-  types.rs               The vocabulary both layers share: `Protocol` (which
-                         wire format) and `Api` (which surface).
-  client.rs              Routes a request: look up the model, pick the
-                         protocol, send it, convert the response back.
+  types.rs               `Api`: which surface a model serves, named so that it
+                         also says which wire format that surface is spoken in.
+  client.rs              Routes a request: look up the model, check it serves
+                         the surface, send it, convert the response back.
 crates/warpllm-server/   The OpenAI-compatible HTTP gateway (unreleased),
                          an axum server wrapping the SDK.
 bindings/python/         PyO3 + maturin. Rust glue in src/, the importable
@@ -103,13 +103,16 @@ The three ideas worth knowing before you read the code:
   in [`specs.yaml`](crates/warpllm/src/registry/specs.yaml) explains the
   provider/model split and the rules the lint enforces — read it before adding
   either.
-* **`Protocol` has one variant per wire format, not per provider.** Providers
-  that speak the same protocol share it, and a provider that diverges states
-  only its delta, under that protocol's `provider_overrides/` module. A
-  provider that matches its protocol implements nothing and inherits it whole
-  — which is why
-  adding an OpenAI-compatible provider is usually a registry edit and no new
-  Rust. A backend whose wire SHAPE differs is a new protocol, not an override.
+* **A surface names its own protocol, and the model names the surface.** An
+  `Api` is spelled `<protocol>_<endpoint>` — `openai_compat_chat_completions` —
+  so a model's `supported_apis` is the only place the roster records a wire
+  format. A provider entry is transport alone, which is what lets one host
+  serve models over different protocols. Providers on the same protocol share
+  its module, and one that diverges states only its delta under that protocol's
+  `provider_overrides/`; a provider that matches it implements nothing and
+  inherits it whole, which is why adding an OpenAI-compatible provider is
+  usually a registry edit and no new Rust. A backend whose wire SHAPE differs
+  is a new protocol, not an override.
 * **The bindings hold no wire shapes of their own.** The non-published
   `warpllm-codegen` workspace tool emits their generated request, response, and
   error types from Rust. Small handwritten facade files decide which names are
