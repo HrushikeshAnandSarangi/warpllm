@@ -24,11 +24,14 @@ This project is to lay out the most resilient open source productionization laye
 ## Status
 
 > [!IMPORTANT]
-> The published packages are **0.1.4**, an early SDK that serves OpenAI chat
-> completions only. Several larger pieces — the provider registry and DeepSeek,
-> the normalized request pipeline, and the OpenAI-compatible HTTP gateway —
-> have landed on `main` but are **not released yet**. Usage docs land with the
-> version that ships them.
+> The published packages are **0.2.0**, which adds the provider registry —
+> DeepSeek and OpenRouter alongside OpenAI, reached through `provider/model`
+> routing strings. It is a **breaking** release: `chat_completion` is now
+> `chat_completions`, and most of the public surface moved. See the
+> [changelog](CHANGELOG.md) before upgrading from `0.1.x`.
+>
+> The OpenAI-compatible HTTP gateway has landed on `main` but is **not
+> released yet**. Streaming is not implemented.
 
 Install the published SDK:
 
@@ -38,11 +41,11 @@ pip install warpllm              # python
 npm install @warpllm/warpllm     # node
 ```
 
-| | Released (0.1.4) | On `main` |
+| | Released (0.2.0) | On `main` |
 | --- | --- | --- |
 | OpenAI chat completions, non-streaming | Yes | Yes |
-| `provider/model` routing strings | OpenAI only | Provider registry |
-| DeepSeek | — | Unreleased |
+| `provider/model` routing strings | Provider registry | Provider registry |
+| DeepSeek, OpenRouter | Yes | Yes |
 | OpenAI-compatible HTTP gateway | — | Unreleased |
 | Streaming | — | — |
 | Failover, load balancing, caching, metrics | — | — |

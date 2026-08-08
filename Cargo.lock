@@ -1854,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "warpllm"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "reqwest",
  "schemars",
@@ -1872,7 +1872,7 @@ dependencies = [
 
 [[package]]
 name = "warpllm-codegen"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "schemars",
  "serde_json",
@@ -1882,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "warpllm-node"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "napi",
  "napi-build",
@@ -1892,7 +1892,7 @@ dependencies = [
 
 [[package]]
 name = "warpllm-python"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "pyo3",
  "pyo3-async-runtimes",
@@ -1901,7 +1901,7 @@ dependencies = [
 
 [[package]]
 name = "warpllm-server"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "axum",
  "clap",

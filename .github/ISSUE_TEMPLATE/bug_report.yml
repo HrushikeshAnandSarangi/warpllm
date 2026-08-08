@@ -31,7 +31,7 @@ body:
     attributes:
       label: Version
       description: Package version, or the commit SHA if you built from source.
-      placeholder: 0.1.4
+      placeholder: 0.2.0
     validations:
       required: true
 
