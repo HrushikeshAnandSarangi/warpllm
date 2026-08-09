@@ -38,6 +38,14 @@
 #                   provider's own name.
 #   capabilities    Optional, and so is each limit in it: max_input_tokens,
 #                   max_output_tokens, max_concurrent_requests.
+#                   `max_input_tokens` is the provider's CONTEXT WINDOW, taken
+#                   verbatim. Do not subtract the output allowance from it: a
+#                   completion may spend far fewer output tokens than the
+#                   ceiling, possibly none, so the whole window really is
+#                   available to input. Where a provider also advertises a
+#                   "maximum input tokens", check it — it is usually just the
+#                   window minus the output ceiling, and recording that would
+#                   under-report the limit for every request that stops early.
 #
 # Surfaces
 # --------
@@ -72,6 +80,18 @@ providers:
   # <https://api-docs.deepseek.com/api/create-chat-completion> (checked
   # 2026-07-24). The legacy `deepseek-chat` / `deepseek-reasoner` names were
   # discontinued 2026-07-24 and map to V4-Flash modes.
+  #
+  # Checked 2026-08-09: both V4 models publish the same context and output
+  # ceilings, so concurrency is still the only thing that differs between the
+  # two entries. DeepSeek states the ceilings in rounded units — "1M context",
+  # "MAXIMUM: 384K" output — and nowhere in exact tokens, so the DECIMAL
+  # reading is recorded: 1M as 1000000 rather than 1048576, 384K as 384000
+  # rather than 393216. Both are the smaller reading of an ambiguous figure,
+  # so a caller sized against them is inside the real ceiling either way,
+  # which under-reporting buys and over-reporting cannot.
+  # <https://api-docs.deepseek.com/quick_start/pricing/> — context and output
+  # <https://api-docs.deepseek.com/quick_start/rate_limit> — concurrency, the
+  # one figure DeepSeek does state exactly, and per account rather than key.
   deepseek:
     base_url: "https://api.deepseek.com"
     env_api_key: DEEPSEEK_API_KEY
@@ -80,37 +100,74 @@ providers:
         supported_apis:
           - {api: openai_compat_chat_completions}
         capabilities:
+          max_input_tokens: 1000000
+          max_output_tokens: 384000
           max_concurrent_requests: 2500
       deepseek/deepseek-v4-pro:
         supported_apis:
           - {api: openai_compat_chat_completions}
         capabilities:
+          max_input_tokens: 1000000
+          max_output_tokens: 384000
           max_concurrent_requests: 500
 
-  # <https://platform.openai.com/docs/api-reference>. These models also serve
-  # the Responses API; it is left off until warpllm implements that surface.
+  # <https://developers.openai.com/api/docs/models> (checked 2026-08-09). These
+  # models also serve the Responses API; it is left off until warpllm
+  # implements that surface.
+  #
+  # OpenAI advertises a context window AND a "maximum input tokens" beside it,
+  # and the second is the window minus the output ceiling exactly — 400,000
+  # less 128,000 giving Nano's 272,000, 1,050,000 less the same 128,000 giving
+  # the 5.6 family's 922,000. It is a figure derived for a caller who reserves
+  # the whole output allowance, not a cap OpenAI enforces separately, so the
+  # WINDOW is what is recorded below.
+  #
+  # No `max_concurrent_requests` anywhere below: OpenAI documents throughput as
+  # per-account tier rate limits, not a per-model ceiling on requests in
+  # flight, and unset already means undocumented rather than unlimited.
   openai:
     base_url: "https://api.openai.com/v1"
     env_api_key: OPENAI_API_KEY
     models:
       # Sorts before the 5.6 family because `-` (0x2D) precedes `.` (0x2E).
+      # <https://developers.openai.com/api/docs/models/gpt-5-nano>
       openai/gpt-5-nano:
         supported_apis:
           - {api: openai_compat_chat_completions}
-      # The GPT-5.6 family. No published limits recorded yet — add them here
-      # once the numbers are in hand.
+        capabilities:
+          max_input_tokens: 400000
+          max_output_tokens: 128000
+      # The GPT-5.6 family, all three sharing one pair of limits. `gpt-5.6` is
+      # OpenAI's alias for Sol rather than a model of its own, so it is
+      # recorded with Sol's numbers.
+      # <https://developers.openai.com/api/docs/models/gpt-5.6-sol>
       openai/gpt-5.6:
         supported_apis:
           - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 1050000
+          max_output_tokens: 128000
+      # <https://developers.openai.com/api/docs/models/gpt-5.6-luna>
       openai/gpt-5.6-luna:
         supported_apis:
           - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 1050000
+          max_output_tokens: 128000
+      # <https://developers.openai.com/api/docs/models/gpt-5.6-sol>
       openai/gpt-5.6-sol:
         supported_apis:
           - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 1050000
+          max_output_tokens: 128000
+      # <https://developers.openai.com/api/docs/models/gpt-5.6-terra>
       openai/gpt-5.6-terra:
         supported_apis:
           - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 1050000
+          max_output_tokens: 128000
 
   # <https://openrouter.ai/docs/api-reference> (checked 2026-08-06).
   #
