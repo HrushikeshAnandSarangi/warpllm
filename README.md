@@ -9,6 +9,94 @@ A warp-speed, robust AI gateway written for rust, node, and python applications 
 [![PyPI](https://img.shields.io/pypi/v/warpllm?logo=pypi&logoColor=white&label=PyPI)](https://pypi.org/project/warpllm/)
 [![npm](https://img.shields.io/npm/v/%40warpllm%2Fwarpllm?logo=npm&label=npm)](https://www.npmjs.com/package/@warpllm/warpllm)
 
+## Quickstart
+
+```bash
+pip install warpllm              # python
+npm install @warpllm/warpllm     # node
+cargo add warpllm                # rust
+```
+
+```bash
+export OPENAI_API_KEY=sk-...
+```
+
+**Python**
+
+```python
+from warpllm import WarpLLM
+
+client = WarpLLM()
+
+completion = client.chat_completions({
+    "model": "openai/gpt-5-nano",
+    "messages": [{"role": "user", "content": "Hello!"}],
+})
+
+print(completion["choices"][0]["message"]["content"])
+```
+
+**Node**
+
+```ts
+import { WarpLLM } from '@warpllm/warpllm'
+
+const client = new WarpLLM()
+
+const completion = await client.chatCompletions({
+  model: 'openai/gpt-5-nano',
+  messages: [{ role: 'user', content: 'Hello!' }],
+})
+
+console.log(completion.choices[0].message.content)
+```
+
+**Rust** — `chat_completions` is `async` and warpllm ships no runtime, so bring
+your own: `cargo add tokio --features macros,rt-multi-thread`.
+
+```rust
+use warpllm::{ChatCompletionRequestMessage, Client, ClientConfig, CreateChatCompletionRequest};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new(ClientConfig::default())?;
+
+    let completion = client
+        .chat_completions(CreateChatCompletionRequest {
+            model: "openai/gpt-5-nano".to_string(),
+            messages: vec![ChatCompletionRequestMessage {
+                role: "user".to_string(),
+                content: "Hello!".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await?;
+
+    let content = completion.choices[0].message.content.as_deref();
+    println!("{}", content.unwrap_or_default());
+    Ok(())
+}
+```
+
+### Switching providers is a string change
+
+Keys are read from the environment when the client is built, so export the one
+the provider needs and change the model string. Nothing else moves.
+
+| Model string | Key it needs |
+| --- | --- |
+| `openai/gpt-5-nano` | `OPENAI_API_KEY` |
+| `deepseek/deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
+| `openrouter/anthropic/claude-sonnet-4` | `OPENROUTER_API_KEY` |
+
+The `provider/` prefix is required. warpllm matches the whole string against its
+roster, so a bare `gpt-5-nano` — or any name it doesn't know — is an error
+rather than a guess at an upstream default.
+
+Runnable versions of all three, with comments, are in
+[`examples/`](examples/).
+
 ## Mission
 
 This project is to lay out the most resilient open source productionization layer for AI-deployments. Designed for you if you want:
@@ -32,14 +120,6 @@ This project is to lay out the most resilient open source productionization laye
 >
 > The OpenAI-compatible HTTP gateway has landed on `main` but is **not
 > released yet**. Streaming is not implemented.
-
-Install the published SDK:
-
-```bash
-cargo add warpllm                # rust
-pip install warpllm              # python
-npm install @warpllm/warpllm     # node
-```
 
 | | Released (0.2.0) | On `main` |
 | --- | --- | --- |
