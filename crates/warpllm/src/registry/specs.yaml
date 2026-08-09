@@ -38,14 +38,11 @@
 #                   provider's own name.
 #   capabilities    Optional, and so is each limit in it: max_input_tokens,
 #                   max_output_tokens, max_concurrent_requests.
-#                   `max_input_tokens` is the provider's CONTEXT WINDOW, taken
-#                   verbatim. Do not subtract the output allowance from it: a
-#                   completion may spend far fewer output tokens than the
-#                   ceiling, possibly none, so the whole window really is
-#                   available to input. Where a provider also advertises a
-#                   "maximum input tokens", check it — it is usually just the
-#                   window minus the output ceiling, and recording that would
-#                   under-report the limit for every request that stops early.
+#                   `max_input_tokens` is the provider's context window, taken
+#                   verbatim. A provider's own "maximum input tokens" is
+#                   usually the window minus its output ceiling; the window is
+#                   what belongs here, since a completion may spend far fewer
+#                   output tokens than the ceiling allows.
 #
 # Surfaces
 # --------
@@ -81,17 +78,13 @@ providers:
   # 2026-07-24). The legacy `deepseek-chat` / `deepseek-reasoner` names were
   # discontinued 2026-07-24 and map to V4-Flash modes.
   #
-  # Checked 2026-08-09: both V4 models publish the same context and output
-  # ceilings, so concurrency is still the only thing that differs between the
-  # two entries. DeepSeek states the ceilings in rounded units — "1M context",
-  # "MAXIMUM: 384K" output — and nowhere in exact tokens, so the DECIMAL
-  # reading is recorded: 1M as 1000000 rather than 1048576, 384K as 384000
-  # rather than 393216. Both are the smaller reading of an ambiguous figure,
-  # so a caller sized against them is inside the real ceiling either way,
-  # which under-reporting buys and over-reporting cannot.
+  # Checked 2026-08-09: both V4 models share one context and output ceiling,
+  # and differ only in concurrency. DeepSeek states the ceilings in rounded
+  # units — "1M context", "MAXIMUM: 384K" output — so the decimal reading is
+  # recorded, being the smaller of the two it could mean.
   # <https://api-docs.deepseek.com/quick_start/pricing/> — context and output
-  # <https://api-docs.deepseek.com/quick_start/rate_limit> — concurrency, the
-  # one figure DeepSeek does state exactly, and per account rather than key.
+  # <https://api-docs.deepseek.com/quick_start/rate_limit> — concurrency, per
+  # account rather than per key.
   deepseek:
     base_url: "https://api.deepseek.com"
     env_api_key: DEEPSEEK_API_KEY
@@ -115,16 +108,13 @@ providers:
   # models also serve the Responses API; it is left off until warpllm
   # implements that surface.
   #
-  # OpenAI advertises a context window AND a "maximum input tokens" beside it,
-  # and the second is the window minus the output ceiling exactly — 400,000
-  # less 128,000 giving Nano's 272,000, 1,050,000 less the same 128,000 giving
-  # the 5.6 family's 922,000. It is a figure derived for a caller who reserves
-  # the whole output allowance, not a cap OpenAI enforces separately, so the
-  # WINDOW is what is recorded below.
+  # The windows below are OpenAI's context windows. The "maximum input tokens"
+  # shown beside each one is that window minus the model's output ceiling, so
+  # it is not what these entries record.
   #
   # No `max_concurrent_requests` anywhere below: OpenAI documents throughput as
   # per-account tier rate limits, not a per-model ceiling on requests in
-  # flight, and unset already means undocumented rather than unlimited.
+  # flight.
   openai:
     base_url: "https://api.openai.com/v1"
     env_api_key: OPENAI_API_KEY
@@ -224,13 +214,15 @@ providers:
         capabilities:
           max_input_tokens: 1050000
           max_output_tokens: 128000
-      # Checked 2026-08-07: the `~deepseek/…-latest` alias, always the newest
-      # DeepSeek V4 Flash revision — 1M context, 64K max output.
+      # Checked 2026-08-09: the `~deepseek/…-latest` alias, always the newest
+      # DeepSeek V4 Flash revision — 1,048,576 context, which every member of
+      # the family shares, so the alias cannot resolve to something narrower.
+      # No max output: OpenRouter publishes none for the alias, and the
+      # revisions behind it disagree (384,000 and 393,216).
       # <https://openrouter.ai/~deepseek/deepseek-v4-flash-latest>
       openrouter/~deepseek/deepseek-v4-flash-latest:
         supported_apis:
           - {api: openai_compat_chat_completions}
         model: ~deepseek/deepseek-v4-flash-latest
         capabilities:
-          max_input_tokens: 1000000
-          max_output_tokens: 65536
+          max_input_tokens: 1048576
