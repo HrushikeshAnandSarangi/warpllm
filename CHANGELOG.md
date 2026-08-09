@@ -8,7 +8,7 @@ Versions follow [semantic versioning](https://semver.org). While the project is
 pre-1.0, a breaking change bumps the MINOR number: `0.1.x` and `0.2.x` are
 incompatible, and `^0.1` will not upgrade you into one.
 
-## [0.2.0] - 2026-08-08
+## [0.2.0] - 2026-08-09
 
 The first release with a provider registry. 0.1.4 could reach OpenAI; this can
 route to any provider on the roster, and it decides at construction which of
