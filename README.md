@@ -5,9 +5,11 @@ A warp-speed, robust AI gateway written for rust, node, and python applications 
 [![Discord](https://img.shields.io/badge/Discord-warpllm-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/payU7Vzuq5)
 [![Reddit](https://img.shields.io/badge/Reddit-r%2Fwarpllm-FF4500?style=for-the-badge&logo=reddit&logoColor=white)](https://www.reddit.com/r/warpllm/)
 
+[![CI](https://img.shields.io/github/actions/workflow/status/warpllm/warpllm/ci.yml?branch=main&logo=github&label=CI)](https://github.com/warpllm/warpllm/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/warpllm?logo=rust&label=crates.io)](https://crates.io/crates/warpllm)
 [![PyPI](https://img.shields.io/pypi/v/warpllm?logo=pypi&logoColor=white&label=PyPI)](https://pypi.org/project/warpllm/)
 [![npm](https://img.shields.io/npm/v/%40warpllm%2Fwarpllm?logo=npm&label=npm)](https://www.npmjs.com/package/@warpllm/warpllm)
+[![License](https://img.shields.io/github/license/warpllm/warpllm?label=license)](https://github.com/warpllm/warpllm/blob/main/LICENSE)
 
 ## Quickstart
 
