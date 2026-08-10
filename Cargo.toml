@@ -29,7 +29,12 @@ serde_json = { version = "1", features = ["preserve_order"] }
 yaml_serde = "0.10.4"
 # Binding metadata is optional on the published core. The non-published
 # `warpllm-codegen` workspace tool is the only consumer.
-ts-rs = { version = "12", features = ["serde-json-impl"] }
+#
+# no-serde-warnings: ts-rs prints a compiler-looking warning for every serde
+# attribute it cannot parse, and `deserialize_with` — how the streaming shapes
+# tell an absent field from an explicit null — is one of them. It says nothing
+# about the TypeScript shape, so the warning is noise on every build.
+ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
 schemars = "1"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }

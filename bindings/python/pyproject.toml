@@ -34,6 +34,7 @@ dev = [
     # them; `tests/test_typing.py` is this package's answer to the Node
     # binding's `npm run typecheck`.
     "mypy>=1.11",
+    "openai>=2.53.0",
 ]
 
 [tool.maturin]

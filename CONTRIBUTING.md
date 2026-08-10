@@ -117,6 +117,13 @@ The three ideas worth knowing before you read the code:
   `warpllm-codegen` workspace tool emits their generated request, response, and
   error types from Rust. Small handwritten facade files decide which names are
   public; they do not repeat any fields.
+* **The official OpenAI SDKs are oracles, never contracts.** Both bindings
+  carry `openai` as a pinned dev dependency and compare warpllm's shapes
+  against it — TypeScript by assignability, Python by walking the pydantic
+  models' field names. Nothing is re-exported and neither published package
+  depends on it: the checks say warpllm still fits what the vendor documents,
+  and fail when it stops. A deviation is allowed, but it gets written down at
+  the check rather than discovered in someone's stream.
 
 ## Development Setup
 
@@ -146,6 +153,17 @@ cd bindings/node && npm ci && ./node_modules/.bin/napi build --platform && npm t
 mock HTTP servers. Keys are only read at request time, from the routed
 provider's environment variable (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, …), if
 you want to make a real call by hand.
+
+One test asks for keys and is `#[ignore]`d for exactly that reason: it streams
+a short completion from every provider whose key is set and checks that each
+chunk survives warpllm's shapes verbatim. Recorded fixtures cannot notice a
+provider changing what it sends, so run it when you have keys around, and turn
+anything it finds into a fixture under
+`crates/warpllm/tests/protocol/openai_compat/chat_completions/fixtures/transcript/`:
+
+```bash
+OPENAI_API_KEY=... cargo test -p warpllm --test live_stream -- --ignored --nocapture
+```
 
 ### Before you open a PR
 

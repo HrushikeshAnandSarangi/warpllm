@@ -77,14 +77,10 @@ fn openrouter_extensions_round_trip_to_the_caller() {
             .await
             .unwrap();
 
-        // Model echo aside, and minus the explicit `"logprobs": null` the wire
-        // types drop on their own (Option + skip_serializing_if).
+        // Model echo aside; the explicit `"logprobs": null` reaches the
+        // caller as the null it was sent as.
         let mut expected = body;
         expected["model"] = json!("openrouter/anthropic/claude-sonnet-4");
-        expected["choices"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("logprobs");
         assert_eq!(serde_json::to_value(&completion).unwrap(), expected);
     });
 }

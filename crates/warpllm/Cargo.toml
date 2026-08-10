@@ -32,3 +32,4 @@ temp-env = "0.3"
 # Examples only. warpllm emits `tracing` events and installs no subscriber of
 # its own; the quickstart shows a caller opting in to see them.
 tracing-subscriber.workspace = true
+proptest = "1.11.0"
