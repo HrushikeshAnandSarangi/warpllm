@@ -2,9 +2,11 @@
 
 from .request import ChatCompletionRequestMessage, CreateChatCompletionRequest
 from .response import CreateChatCompletionResponse
+from .stream_response import CreateChatCompletionStreamResponse
 
 __all__ = [
 "ChatCompletionRequestMessage",
 "CreateChatCompletionRequest",
 "CreateChatCompletionResponse",
+"CreateChatCompletionStreamResponse",
 ]

@@ -1,0 +1,12 @@
+data: {"id":"b7c4e2a1-3f9d-4c8b-9e15-6a2d7f40c3e8","object":"chat.completion.chunk","created":1753300000,"model":"deepseek-v4-flash","system_fingerprint":"fp_deepseek_v4","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":"the user wants today's weather"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"b7c4e2a1-3f9d-4c8b-9e15-6a2d7f40c3e8","object":"chat.completion.chunk","created":1753300000,"model":"deepseek-v4-flash","system_fingerprint":"fp_deepseek_v4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_0_5f3a91c2","type":"function","function":{"name":"get_weather","arguments":""}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"b7c4e2a1-3f9d-4c8b-9e15-6a2d7f40c3e8","object":"chat.completion.chunk","created":1753300000,"model":"deepseek-v4-flash","system_fingerprint":"fp_deepseek_v4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":"}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"b7c4e2a1-3f9d-4c8b-9e15-6a2d7f40c3e8","object":"chat.completion.chunk","created":1753300000,"model":"deepseek-v4-flash","system_fingerprint":"fp_deepseek_v4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Seoul\"}"}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"b7c4e2a1-3f9d-4c8b-9e15-6a2d7f40c3e8","object":"chat.completion.chunk","created":1753300000,"model":"deepseek-v4-flash","system_fingerprint":"fp_deepseek_v4","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":94,"completion_tokens":17,"total_tokens":111,"prompt_tokens_details":{"cached_tokens":64}}}
+
+data: [DONE]
+

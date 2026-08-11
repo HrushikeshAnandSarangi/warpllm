@@ -30,7 +30,10 @@ fn openai_happy_path() {
             Some("Hello there!")
         );
         assert_eq!(completion.choices[0].finish_reason, "stop");
-        assert_eq!(completion.service_tier.as_deref(), Some("default"));
+        assert_eq!(
+            completion.service_tier.as_ref().and_then(Option::as_deref),
+            Some("default")
+        );
         assert_eq!(
             completion.system_fingerprint.as_deref(),
             Some("fp_44709d6fcb")
@@ -240,15 +243,11 @@ fn response_unknowns_and_tool_calls_round_trip_to_caller() {
             .unwrap();
 
         // The full pipeline (ingest → normalized → render) must hand the
-        // caller exactly what the provider sent, model echo aside. The
-        // explicit `"logprobs": null` is dropped by the wire types themselves
-        // (Option + skip_serializing_if, predating normalization).
+        // caller exactly what the provider sent, model echo aside — including
+        // the explicit `"logprobs": null`, which is a value the provider chose
+        // and not the same thing as having sent no key.
         let mut expected = body;
         expected["model"] = json!("openai/gpt-5.6");
-        expected["choices"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("logprobs");
         assert_eq!(serde_json::to_value(&completion).unwrap(), expected);
     });
 }

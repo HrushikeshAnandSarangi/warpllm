@@ -26,6 +26,12 @@ export type ChatCompletionMessageToolCall = { id: string,
  */
 type: string, function: Function, };
 
+export type ChatCompletionMessageToolCallChunk = { index: number, id?: string, function?: ToolCallChunkFunction,
+/**
+ * Conventionally `"function"`; compatible providers may differ.
+ */
+type?: string, };
+
 export type ChatCompletionMessageToolCallUnion = ChatCompletionMessageToolCall | ChatCompletionMessageCustomToolCall;
 
 export type ChatCompletionModeration = { input: ModerationOutcome, output: ModerationOutcome, };
@@ -52,11 +58,21 @@ export type ChatCompletionResponseMessage = { content: string | null, refusal: s
 /**
  * Conventionally `"assistant"`; compatible providers may differ.
  */
-role: string, annotations?: Array<Annotation>, audio?: ChatCompletionAudio,
+role: string, annotations?: Array<Annotation>, audio?: ChatCompletionAudio | null,
 /**
  * Deprecated upstream in favor of `tool_calls`.
  */
-function_call?: FunctionCall, tool_calls?: Array<ChatCompletionMessageToolCallUnion>, };
+function_call?: FunctionCall | null, tool_calls?: Array<ChatCompletionMessageToolCallUnion>, };
+
+export type ChatCompletionStreamResponseDelta = { content?: string | null,
+/**
+ * Deprecated upstream in favor of `tool_calls`.
+ */
+function_call?: DeltaFunctionCall, refusal?: string | null,
+/**
+ * Provider-defined role, sent on the chunk that opens a choice.
+ */
+role?: string, tool_calls?: Array<ChatCompletionMessageToolCallChunk>, };
 
 export type ChatCompletionTokenLogprob = { token: string, bytes: Array<number> | null, logprob: number, top_logprobs: Array<TopLogprob>, };
 
@@ -64,14 +80,9 @@ export type Choice = {
 /**
  * Provider-defined reason that generation stopped.
  */
-finish_reason: string, index: number,
-/**
- * Optional per the docs; `Option` also tolerates the explicit
- * `"logprobs": null` some OpenAI-compatible backends emit.
- */
-logprobs?: ChoiceLogprobs, message: ChatCompletionResponseMessage, };
+finish_reason: string, index: number, logprobs?: ChoiceLogprobs | null, message: ChatCompletionResponseMessage, };
 
-export type ChoiceLogprobs = { content?: Array<ChatCompletionTokenLogprob>, refusal?: Array<ChatCompletionTokenLogprob>, };
+export type ChoiceLogprobs = { content?: Array<ChatCompletionTokenLogprob> | null, refusal?: Array<ChatCompletionTokenLogprob> | null, };
 
 export type CompletionTokensDetails = { accepted_prediction_tokens?: number, audio_tokens?: number, reasoning_tokens?: number, rejected_prediction_tokens?: number, };
 
@@ -91,17 +102,58 @@ model: string,
 /**
  * Conventionally `"chat.completion"`; compatible providers may differ.
  */
-object: string, moderation?: ChatCompletionModeration,
+object: string, moderation?: ChatCompletionModeration | null,
 /**
  * Provider-defined service tier identifier.
  */
-service_tier?: string,
+service_tier?: string | null,
 /**
  * Deprecated upstream but still returned; passed through as-is.
  */
 system_fingerprint?: string, usage?: CompletionUsage, };
 
+export type CreateChatCompletionStreamResponse = {
+/**
+ * Identifies the completion, not the chunk: every chunk of one stream
+ * carries the same value.
+ */
+id: string,
+/**
+ * Empty on the usage-only chunk `stream_options.include_usage` adds.
+ */
+choices: Array<StreamChoice>, created: number,
+/**
+ * Echoes the caller-supplied `provider/model` string.
+ */
+model: string,
+/**
+ * Conventionally `"chat.completion.chunk"`; compatible providers may
+ * differ.
+ */
+object: string, moderation?: ChatCompletionModeration | null,
+/**
+ * Provider-defined service tier identifier.
+ */
+service_tier?: string | null,
+/**
+ * Deprecated upstream but still returned; passed through as-is.
+ */
+system_fingerprint?: string,
+/**
+ * Totals for the whole request, not the chunk. Present only when the
+ * caller asks for it, and `null` on every chunk before the last.
+ */
+usage?: CompletionUsage | null, };
+
 export type Custom = { input: string, name: string, };
+
+export type DeltaFunctionCall = {
+/**
+ * A fragment of the JSON-encoded arguments; concatenating the fragments
+ * of one call yields the whole, which is model-generated and so may still
+ * be invalid JSON.
+ */
+arguments?: string, name?: string, };
 
 export type ErrorBody = { message: string,
 /**
@@ -169,5 +221,25 @@ export type PromptTokensDetails = { audio_tokens?: number,
  * Unadjusted number of prompt tokens written to cache.
  */
 cache_write_tokens?: number, cached_tokens?: number, };
+
+export type StreamChoice = { delta: ChatCompletionStreamResponseDelta,
+/**
+ * Provider-defined reason that generation stopped, and `null` until it
+ * does — which is every chunk of this choice but the last.
+ */
+finish_reason: string | null,
+/**
+ * Which choice this chunk continues; chunks of an `n > 1` request
+ * interleave.
+ */
+index: number, logprobs?: ChoiceLogprobs | null, };
+
+export type ToolCallChunkFunction = {
+/**
+ * A fragment of the JSON-encoded arguments; concatenating the fragments
+ * of one call yields the whole, which is model-generated and so may still
+ * be invalid JSON.
+ */
+arguments?: string, name?: string, };
 
 export type TopLogprob = { token: string, bytes: Array<number> | null, logprob: number, };

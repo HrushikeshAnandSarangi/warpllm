@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use ts_rs::{Config, TS, TypeVisitor};
 use warpllm::OpenAiError;
 use warpllm::protocol::openai_compat::chat_completions::types::{
-    CreateChatCompletionRequest, CreateChatCompletionResponse,
+    CreateChatCompletionRequest, CreateChatCompletionResponse, CreateChatCompletionStreamResponse,
 };
 
 fn main() {
@@ -60,6 +60,7 @@ fn generate_typescript(output: &Path) {
     let mut declarations = Declarations::new(config);
     declarations.collect::<CreateChatCompletionRequest>();
     declarations.collect::<CreateChatCompletionResponse>();
+    declarations.collect::<CreateChatCompletionStreamResponse>();
     declarations.collect::<OpenAiError>();
 
     let mut source =
@@ -124,11 +125,16 @@ fn generate_python(root: &Path, staging: &Path) {
         &schema_dir.join("response.json"),
         Contract::Serialize,
     );
+    write_schema::<CreateChatCompletionStreamResponse>(
+        &schema_dir.join("stream_response.json"),
+        Contract::Serialize,
+    );
     write_schema::<OpenAiError>(&schema_dir.join("error.json"), Contract::Serialize);
 
     for (schema, output) in [
         ("request.json", "request.py"),
         ("response.json", "response.py"),
+        ("stream_response.json", "stream_response.py"),
         ("error.json", "error.py"),
     ] {
         let python_project = root.join("bindings/python");
@@ -174,11 +180,13 @@ fn generate_python(root: &Path, staging: &Path) {
          \n\
          from .request import ChatCompletionRequestMessage, CreateChatCompletionRequest\n\
          from .response import CreateChatCompletionResponse\n\
+         from .stream_response import CreateChatCompletionStreamResponse\n\
          \n\
          __all__ = [\n\
              \"ChatCompletionRequestMessage\",\n\
              \"CreateChatCompletionRequest\",\n\
              \"CreateChatCompletionResponse\",\n\
+             \"CreateChatCompletionStreamResponse\",\n\
          ]\n",
     )
     .expect("write generated Python package");
@@ -206,10 +214,19 @@ fn write_schema<T: JsonSchema>(path: &Path, contract: Contract) {
     fs::write(path, rendered).expect("write staged JSON Schema");
 }
 
+/// Set by an `Option<Option<T>>` field: one whose value is emitted as `null`
+/// when it was received as `null`, and omitted only when it was absent. The
+/// two states are the same Rust `Option` to schemars, so the field says which
+/// it is and this marker is consumed here rather than shipped in the schema.
+const NULLABLE_WHEN_PRESENT: &str = "x-nullable-when-present";
+
 /// `Option<T>` accepts null while deserializing, but a field carrying
 /// `skip_serializing_if = Option::is_none` is absent rather than null on output.
 /// Schemars records optionality but retains the null branch, so remove it from
 /// non-required properties when generating response/output types.
+///
+/// The exception is [`NULLABLE_WHEN_PRESENT`], which the Rust field marks
+/// itself with.
 fn strip_null_from_omitted_properties(value: &mut Value) {
     match value {
         Value::Object(map) => {
@@ -223,7 +240,10 @@ fn strip_null_from_omitted_properties(value: &mut Value) {
                 .collect();
             if let Some(Value::Object(properties)) = map.get_mut("properties") {
                 for (name, property) in properties {
-                    if !required.contains(name) {
+                    let nullable_when_present = property
+                        .as_object_mut()
+                        .is_some_and(|property| property.remove(NULLABLE_WHEN_PRESENT).is_some());
+                    if !required.contains(name) && !nullable_when_present {
                         remove_null(property);
                     }
                 }
@@ -348,6 +368,57 @@ mod tests {
         );
     }
 
+    /// The streaming shapes need the opposite of the rule above for the
+    /// handful of fields a chunk sends as an explicit `null`, and they say so
+    /// on the Rust field. The marker itself is codegen's, not the schema's.
+    #[test]
+    fn a_property_that_is_null_when_present_keeps_its_null() {
+        let mut schema = json!({
+            "type": "object",
+            "required": [],
+            "properties": {
+                "usage": { "type": ["integer", "null"], "x-nullable-when-present": true },
+                "system_fingerprint": { "type": ["string", "null"] }
+            }
+        });
+
+        strip_null_from_omitted_properties(&mut schema);
+
+        assert_eq!(
+            schema["properties"]["usage"]["type"],
+            json!(["integer", "null"])
+        );
+        assert!(
+            schema["properties"]["usage"]
+                .get(NULLABLE_WHEN_PRESENT)
+                .is_none(),
+            "the marker is consumed here, not shipped"
+        );
+        assert_eq!(schema["properties"]["system_fingerprint"]["type"], "string");
+    }
+
+    /// ...and end to end: the chunk's `usage` is absent OR null, while its
+    /// `system_fingerprint` is only ever absent or a string.
+    #[test]
+    fn the_stream_response_tells_an_absent_field_from_a_null_one() {
+        let mut schema = schema_for::<CreateChatCompletionStreamResponse>(Contract::Serialize);
+
+        strip_null_from_omitted_properties(&mut schema);
+
+        assert!(
+            schema["properties"]["usage"]["anyOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|branch| branch["type"] == "null"),
+            "usage lost the null it is sent with on every chunk but the last"
+        );
+        assert_eq!(
+            schema["properties"]["system_fingerprint"]["type"], "string",
+            "an absent-only field must not gain a null branch"
+        );
+    }
+
     #[test]
     fn nullable_array_rewrite_preserves_items() {
         let mut schema = json!({
@@ -370,6 +441,9 @@ mod tests {
             Contract::Deserialize,
         ));
         assert_no_closed_string_constraints(&schema_for::<CreateChatCompletionResponse>(
+            Contract::Serialize,
+        ));
+        assert_no_closed_string_constraints(&schema_for::<CreateChatCompletionStreamResponse>(
             Contract::Serialize,
         ));
     }

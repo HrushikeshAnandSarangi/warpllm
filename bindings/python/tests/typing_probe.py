@@ -11,6 +11,11 @@ from __future__ import annotations
 
 from warpllm import CreateChatCompletionRequest, WarpLLM
 
+# Imported from the generated package rather than from `warpllm`: no method
+# returns a chunk yet, so the public facade does not name one. This is the
+# probe that says whether it would be usable when one does.
+from warpllm._generated import CreateChatCompletionStreamResponse
+
 
 def a_plain_dict_is_a_request(client: WarpLLM) -> None:
     client.chat_completions(
@@ -54,6 +59,54 @@ def the_response_is_typed(client: WarpLLM) -> None:
 
     # ...and a misspelled field is an error rather than `Any`.
     completion["choicez"]  # type: ignore[typeddict-item]
+
+
+def iterating_a_stream_needs_no_casts(
+    stream: list[CreateChatCompletionStreamResponse],
+) -> str:
+    """What a caller writes when the chunks start arriving.
+
+    Every read here has to type-check without a cast or an `Any` escape, and
+    the annotations have to admit the three states a chunk really has: a key
+    that is absent, a key that is `null`, and a value.
+    """
+    text = ""
+    arguments: dict[int, str] = {}
+    total_tokens = 0
+    for chunk in stream:
+        for choice in chunk["choices"]:
+            delta = choice["delta"]
+            # `.get` twice over, and both are load-bearing: `content` may be
+            # absent from a chunk that carries only a tool call, and `null` on
+            # the one that opens a refusal.
+            fragment = delta.get("content")
+            if fragment is not None:
+                text += fragment
+            for call in delta.get("tool_calls") or []:
+                function = call.get("function")
+                if function is not None:
+                    arguments[call["index"]] = arguments.get(
+                        call["index"], ""
+                    ) + (function.get("arguments") or "")
+            # Required upstream and null until the choice ends, so it is always
+            # readable and usually `None`.
+            finish: str | None = choice["finish_reason"]
+            assert finish is None or finish
+        # Absent unless the caller asked for it, and null on every chunk but
+        # the last -- which is why the annotation is `| None` and the key is
+        # not required.
+        usage = chunk.get("usage")
+        if usage is not None:
+            total_tokens = usage["total_tokens"]
+    assert total_tokens >= 0 and arguments is not None
+    return text
+
+
+def the_stream_response_is_strict_when_requested(
+    chunk: CreateChatCompletionStreamResponse,
+) -> None:
+    chunk["choises"]  # type: ignore[typeddict-item]
+    chunk["choices"][0]["delta"]["contnet"]  # type: ignore[typeddict-item]
 
 
 def a_nullable_field_stays_nullable(client: WarpLLM) -> None:

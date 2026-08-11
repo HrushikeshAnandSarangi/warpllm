@@ -5,7 +5,9 @@
 //! one shape regardless of upstream.
 //!
 //! The response section is a field-for-field copy of the `chat.completion`
-//! object, keeping upstream object names and field order:
+//! object, and the streaming section the same for the `chat.completion.chunk`
+//! a `stream: true` request is answered with; both keep upstream object names
+//! and field order:
 //! - Response object: <https://developers.openai.com/api/reference/resources/chat>
 //! - Request parameters: <https://platform.openai.com/docs/api-reference/chat/create>
 //!
@@ -35,6 +37,45 @@ pub type UnknownFields = serde_json::Map<String, serde_json::Value>;
 // const values, ranges, or other constraints that are absent from the Rust
 // field type; OpenAI-compatible providers extend these values independently.
 
+// Optionality is spelled three ways here, one per state the wire can be in,
+// and which one a field gets follows the upstream spec rather than taste:
+// - required: a plain field.
+// - required but nullable, like a message's `content`: an `Option` that always
+//   serializes, `null` when there is none.
+// - optional AND nullable, like `usage` and `logprobs`: `Option<Option<_>>`,
+//   read through [`present_or_null`]. Absent and `null` are different bytes,
+//   and a provider sends both — OpenAI streams `"logprobs": null` on every
+//   chunk and DeepSeek omits the key outright — so warpllm holds the
+//   difference rather than normalizing it. Absent stays absent; `null` stays
+//   `null`.
+//
+// That third kind is what makes these shapes a superset of OpenAI's rather
+// than merely a permissive reader of them: everything the vendor can put on
+// the wire, warpllm can hold AND hand back unchanged. Narrowing one to a plain
+// `Option` would still ACCEPT a provider's null and would still be lossless in
+// meaning, but the null would come back out as an absent key and the generated
+// TypeScript would stop admitting a value OpenAI's own types allow.
+//
+// The codegen attributes on that third kind say it in each generator's terms:
+// `ts(optional)` unwraps the outer `Option` only, so TypeScript keeps the
+// inner `| null`, and `x-nullable-when-present` tells `warpllm-codegen` to
+// leave the null branch a serialized schema otherwise drops from an omittable
+// field.
+
+/// Deserializes an optional, nullable field: `None` when the key was absent,
+/// `Some(None)` when it was present and `null`.
+///
+/// Serde's own `Option` collapses the two — a nested `Option<Option<T>>` reads
+/// an explicit `null` as `None`, the same value a missing key produces — so
+/// the outer layer only means "the key was there" with this in front of it.
+fn present_or_null<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
+}
+
 // ---------------------------------------------------------------------------
 // Response — the `chat.completion` object
 // <https://developers.openai.com/api/reference/resources/chat>
@@ -50,13 +91,23 @@ pub struct CreateChatCompletionResponse {
     pub model: String,
     /// Conventionally `"chat.completion"`; compatible providers may differ.
     pub object: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[cfg_attr(feature = "codegen", ts(optional))]
-    pub moderation: Option<ChatCompletionModeration>,
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub moderation: Option<Option<ChatCompletionModeration>>,
     /// Provider-defined service tier identifier.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[cfg_attr(feature = "codegen", ts(optional))]
-    pub service_tier: Option<String>,
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub service_tier: Option<Option<String>>,
     /// Deprecated upstream but still returned; passed through as-is.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "codegen", ts(optional))]
@@ -75,29 +126,42 @@ pub struct Choice {
     /// Provider-defined reason that generation stopped.
     pub finish_reason: String,
     pub index: u32,
-    /// Optional per the docs; `Option` also tolerates the explicit
-    /// `"logprobs": null` some OpenAI-compatible backends emit.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[cfg_attr(feature = "codegen", ts(optional))]
-    pub logprobs: Option<ChoiceLogprobs>,
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub logprobs: Option<Option<ChoiceLogprobs>>,
     pub message: ChatCompletionResponseMessage,
     #[serde(flatten)]
     #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
 }
 
-/// OpenAI documents both arrays as required; OpenAI-compatible backends
-/// are looser — DeepSeek omits `refusal` entirely and can null `content` —
-/// so both are optional here and absent fields stay off the wire.
+/// OpenAI documents both arrays as required and nullable; OpenAI-compatible
+/// backends are looser still — DeepSeek omits `refusal` entirely — so both are
+/// optional here, and all three states a caller can receive stay distinct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct ChoiceLogprobs {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[cfg_attr(feature = "codegen", ts(optional))]
-    pub content: Option<Vec<ChatCompletionTokenLogprob>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub content: Option<Option<Vec<ChatCompletionTokenLogprob>>>,
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[cfg_attr(feature = "codegen", ts(optional))]
-    pub refusal: Option<Vec<ChatCompletionTokenLogprob>>,
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub refusal: Option<Option<Vec<ChatCompletionTokenLogprob>>>,
     #[serde(flatten)]
     #[cfg_attr(feature = "codegen", ts(skip))]
     pub unknown_fields: UnknownFields,
@@ -136,13 +200,23 @@ pub struct ChatCompletionResponseMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "codegen", ts(optional))]
     pub annotations: Option<Vec<Annotation>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[cfg_attr(feature = "codegen", ts(optional))]
-    pub audio: Option<ChatCompletionAudio>,
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub audio: Option<Option<ChatCompletionAudio>>,
     /// Deprecated upstream in favor of `tool_calls`.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[cfg_attr(feature = "codegen", ts(optional))]
-    pub function_call: Option<FunctionCall>,
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub function_call: Option<Option<FunctionCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "codegen", ts(optional))]
     pub tool_calls: Option<Vec<ChatCompletionMessageToolCallUnion>>,
@@ -390,6 +464,192 @@ pub struct ChatCompletionModerationError {
 }
 
 // ---------------------------------------------------------------------------
+// Streaming response — the `chat.completion.chunk` object
+// <https://developers.openai.com/api/reference/resources/chat>
+// ---------------------------------------------------------------------------
+
+// A chunk repeats the completion's envelope and replaces the finished message
+// with a delta, so the shapes that describe neither — logprobs, usage,
+// moderation — are the completion's own types, not copies of them. The request
+// is [`CreateChatCompletionRequest`] with `stream` set; only the reply differs.
+//
+// A stream is where the three spellings of optionality above earn their keep:
+// `finish_reason` is null on every chunk until the choice ends, `usage` is
+// null on every chunk but the last, and `logprobs` is null on all of them.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
+pub struct CreateChatCompletionStreamResponse {
+    /// Identifies the completion, not the chunk: every chunk of one stream
+    /// carries the same value.
+    pub id: String,
+    /// Empty on the usage-only chunk `stream_options.include_usage` adds.
+    pub choices: Vec<StreamChoice>,
+    pub created: u64,
+    /// Echoes the caller-supplied `provider/model` string.
+    pub model: String,
+    /// Conventionally `"chat.completion.chunk"`; compatible providers may
+    /// differ.
+    pub object: String,
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub moderation: Option<Option<ChatCompletionModeration>>,
+    /// Provider-defined service tier identifier.
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub service_tier: Option<Option<String>>,
+    /// Deprecated upstream but still returned; passed through as-is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub system_fingerprint: Option<String>,
+    /// Totals for the whole request, not the chunk. Present only when the
+    /// caller asks for it, and `null` on every chunk before the last.
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub usage: Option<Option<CompletionUsage>>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
+    pub unknown_fields: UnknownFields,
+}
+
+/// One choice of a [`CreateChatCompletionStreamResponse`]. The spec leaves it
+/// unnamed; only this name is warpllm's.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
+pub struct StreamChoice {
+    pub delta: ChatCompletionStreamResponseDelta,
+    /// Provider-defined reason that generation stopped, and `null` until it
+    /// does — which is every chunk of this choice but the last.
+    pub finish_reason: Option<String>,
+    /// Which choice this chunk continues; chunks of an `n > 1` request
+    /// interleave.
+    pub index: u32,
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub logprobs: Option<Option<ChoiceLogprobs>>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
+    pub unknown_fields: UnknownFields,
+}
+
+/// The streaming counterpart of [`ChatCompletionResponseMessage`]: every field
+/// is a fragment, so every field is optional — a chunk carrying only `role`,
+/// only a slice of `content`, or nothing at all is ordinary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
+pub struct ChatCompletionStreamResponseDelta {
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub content: Option<Option<String>>,
+    /// Deprecated upstream in favor of `tool_calls`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub function_call: Option<DeltaFunctionCall>,
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    #[cfg_attr(feature = "codegen", schemars(extend("x-nullable-when-present" = true)))]
+    pub refusal: Option<Option<String>>,
+    /// Provider-defined role, sent on the chunk that opens a choice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub tool_calls: Option<Vec<ChatCompletionMessageToolCallChunk>>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
+    pub unknown_fields: UnknownFields,
+}
+
+/// Deprecated upstream in favor of tool calls. Unlike [`FunctionCall`], both
+/// halves arrive in pieces, so neither is required.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
+pub struct DeltaFunctionCall {
+    /// A fragment of the JSON-encoded arguments; concatenating the fragments
+    /// of one call yields the whole, which is model-generated and so may still
+    /// be invalid JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub arguments: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub name: Option<String>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
+    pub unknown_fields: UnknownFields,
+}
+
+/// A slice of one tool call. `index` — not `id`, which arrives once — is what
+/// says which call in the choice the fragment belongs to.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
+pub struct ChatCompletionMessageToolCallChunk {
+    pub index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub function: Option<ToolCallChunkFunction>,
+    /// Conventionally `"function"`; compatible providers may differ.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub r#type: Option<String>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
+    pub unknown_fields: UnknownFields,
+}
+
+/// The function half of a [`ChatCompletionMessageToolCallChunk`]. Unlike
+/// [`Function`], both fields are fragments, so neither is required.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
+pub struct ToolCallChunkFunction {
+    /// A fragment of the JSON-encoded arguments; concatenating the fragments
+    /// of one call yields the whole, which is model-generated and so may still
+    /// be invalid JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub arguments: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional))]
+    pub name: Option<String>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "codegen", ts(skip))]
+    pub unknown_fields: UnknownFields,
+}
+
+// ---------------------------------------------------------------------------
 // Request — the `POST /v1/chat/completions` parameters
 // <https://platform.openai.com/docs/api-reference/chat/create>
 // ---------------------------------------------------------------------------
@@ -421,7 +681,8 @@ pub struct CreateChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "codegen", ts(optional = nullable))]
     pub stop: Option<Vec<String>>,
-    // Not implemented.
+    // The reply this asks for is CreateChatCompletionStreamResponse, above.
+    // The shapes are defined; nothing reads a stream off the socket yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "codegen", ts(optional = nullable))]
     pub stream: Option<bool>,
@@ -675,7 +936,7 @@ mod tests {
             &tool_calls[1],
             ChatCompletionMessageToolCallUnion::Custom(c) if c.custom.input == "raw text"
         ));
-        let moderation = completion.moderation.as_ref().unwrap();
+        let moderation = completion.moderation.as_ref().unwrap().as_ref().unwrap();
         assert!(matches!(
             &moderation.input,
             ModerationOutcome::ModerationResults(r) if !r.results[0].flagged
@@ -695,6 +956,231 @@ mod tests {
         );
 
         assert_eq!(serde_json::to_value(&completion).unwrap(), body);
+    }
+
+    /// Every field OpenAI documents as optional AND nullable, sent as an
+    /// explicit null, on the whole-completion side. Each one has to come back
+    /// as the null it arrived as — that is what makes these shapes a superset
+    /// of OpenAI's own rather than a permissive reader of them, and it is
+    /// checked from the other end by `bindings/node/__test__/
+    /// openai-oracle.ts`.
+    #[test]
+    fn an_explicit_null_in_a_completion_is_not_an_absent_field() {
+        let body = serde_json::json!({
+            "id": "chatcmpl-123",
+            "choices": [{
+                "finish_reason": "stop",
+                "index": 0,
+                "logprobs": {"content": null, "refusal": null},
+                "message": {
+                    "content": "hi",
+                    "refusal": null,
+                    "role": "assistant",
+                    "audio": null,
+                    "function_call": null
+                }
+            }],
+            "created": 1_700_000_000,
+            "model": "gpt-5.6",
+            "object": "chat.completion",
+            "moderation": null,
+            "service_tier": null
+        });
+
+        let completion: CreateChatCompletionResponse =
+            serde_json::from_value(body.clone()).unwrap();
+
+        assert!(matches!(completion.moderation, Some(None)));
+        assert!(matches!(completion.service_tier, Some(None)));
+        assert!(matches!(completion.choices[0].logprobs, Some(Some(_))));
+        assert!(matches!(completion.choices[0].message.audio, Some(None)));
+        assert_eq!(serde_json::to_value(&completion).unwrap(), body);
+    }
+
+    /// The chunk a provider that sends nothing optional would send: a delta
+    /// with no fields at all, and a choice that has not finished.
+    #[test]
+    fn minimal_chunk_deserializes() {
+        let chunk: CreateChatCompletionStreamResponse = serde_json::from_str(
+            r#"{
+                "id": "chatcmpl-123",
+                "choices": [{"delta": {}, "finish_reason": null, "index": 0}],
+                "created": 1700000000,
+                "model": "gpt-5.6",
+                "object": "chat.completion.chunk"
+            }"#,
+        )
+        .unwrap();
+        assert!(chunk.moderation.is_none());
+        assert!(chunk.service_tier.is_none());
+        assert!(chunk.system_fingerprint.is_none());
+        assert!(chunk.usage.is_none());
+        assert!(chunk.choices[0].logprobs.is_none());
+        assert!(chunk.choices[0].delta.content.is_none());
+        assert!(chunk.choices[0].delta.role.is_none());
+        assert!(chunk.choices[0].delta.tool_calls.is_none());
+        // Absent optionals stay off the wire; `finish_reason` is required
+        // upstream, so it goes back out as the null it arrived as.
+        let wire = serde_json::to_value(&chunk).unwrap();
+        assert!(wire.get("usage").is_none());
+        assert!(wire["choices"][0].get("logprobs").is_none());
+        assert!(wire["choices"][0]["delta"].as_object().unwrap().is_empty());
+        assert_eq!(wire["choices"][0]["finish_reason"], serde_json::Value::Null);
+    }
+
+    /// The distinction the streaming shapes exist to keep: OpenAI sends
+    /// `"usage": null` on every chunk but the last and `"logprobs": null` on
+    /// all of them, so an explicit null must come back out as one — while a
+    /// key the provider never sent must stay absent.
+    #[test]
+    fn an_explicit_null_is_not_an_absent_field() {
+        let nulled: CreateChatCompletionStreamResponse = serde_json::from_str(
+            r#"{
+                "id": "chatcmpl-123",
+                "choices": [{
+                    "delta": {"content": null, "refusal": null},
+                    "finish_reason": null,
+                    "index": 0,
+                    "logprobs": null
+                }],
+                "created": 1700000000,
+                "model": "gpt-5.6",
+                "object": "chat.completion.chunk",
+                "usage": null
+            }"#,
+        )
+        .unwrap();
+
+        assert!(matches!(nulled.usage, Some(None)));
+        assert!(matches!(nulled.choices[0].logprobs, Some(None)));
+        assert_eq!(nulled.choices[0].delta.content, Some(None));
+        let wire = serde_json::to_value(&nulled).unwrap();
+        assert_eq!(wire["usage"], serde_json::Value::Null);
+        assert_eq!(wire["choices"][0]["logprobs"], serde_json::Value::Null);
+        assert_eq!(
+            wire["choices"][0]["delta"]["content"],
+            serde_json::Value::Null
+        );
+    }
+
+    /// Fields we don't model must be captured at every nesting level of a
+    /// chunk too — `obfuscation`, which OpenAI adds to live streams and no
+    /// specification names, is the case that made this concrete.
+    #[test]
+    fn chunk_unknown_fields_round_trip() {
+        let body = serde_json::json!({
+            "id": "chatcmpl-123",
+            "choices": [{
+                "delta": {
+                    "content": "hi",
+                    "reasoning_content": "step by step"
+                },
+                "finish_reason": null,
+                "index": 0,
+                "new_choice_field": true
+            }],
+            "created": 1700000000,
+            "model": "gpt-5.6",
+            "object": "chat.completion.chunk",
+            "obfuscation": "8Xk2p"
+        });
+
+        let chunk: CreateChatCompletionStreamResponse =
+            serde_json::from_value(body.clone()).unwrap();
+
+        assert_eq!(chunk.unknown_fields["obfuscation"], "8Xk2p");
+        assert_eq!(chunk.choices[0].unknown_fields["new_choice_field"], true);
+        assert_eq!(
+            chunk.choices[0].delta.unknown_fields["reasoning_content"],
+            "step by step"
+        );
+        assert_eq!(serde_json::to_value(&chunk).unwrap(), body);
+    }
+
+    /// A chunk with every documented field must round-trip losslessly, the
+    /// same proof the completion object carries — including the tool-call
+    /// fragments, whose `index` is what reassembles them.
+    #[test]
+    fn full_chunk_round_trips() {
+        let body = serde_json::json!({
+            "id": "chatcmpl-123",
+            "choices": [{
+                "delta": {
+                    "content": "Hello",
+                    "function_call": {"arguments": "{\"q\":", "name": "legacy_fn"},
+                    "refusal": null,
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call-1",
+                        "function": {"arguments": "{\"q\":", "name": "search"},
+                        "type": "function"
+                    }]
+                },
+                "finish_reason": "tool_calls",
+                "index": 0,
+                "logprobs": {
+                    "content": [{
+                        "token": "Hello",
+                        "bytes": [72, 101, 108, 108, 111],
+                        "logprob": -0.1,
+                        "top_logprobs": [{"token": "Hello", "bytes": null, "logprob": -0.1}]
+                    }],
+                    "refusal": null
+                }
+            }],
+            "created": 1_700_000_000,
+            "model": "gpt-5.6",
+            "object": "chat.completion.chunk",
+            "moderation": {
+                "input": {
+                    "type": "error",
+                    "code": "moderation_unavailable",
+                    "message": "try again"
+                },
+                "output": {
+                    "type": "error",
+                    "code": "moderation_unavailable",
+                    "message": "try again"
+                }
+            },
+            "service_tier": "default",
+            "system_fingerprint": "fp_44709d6fcb",
+            "usage": {
+                "completion_tokens": 12,
+                "prompt_tokens": 9,
+                "total_tokens": 21
+            }
+        });
+
+        let chunk: CreateChatCompletionStreamResponse =
+            serde_json::from_value(body.clone()).unwrap();
+
+        let delta = &chunk.choices[0].delta;
+        let tool_call = &delta.tool_calls.as_ref().unwrap()[0];
+        assert_eq!(tool_call.index, 0);
+        assert_eq!(
+            tool_call.function.as_ref().unwrap().arguments.as_deref(),
+            Some("{\"q\":")
+        );
+        assert_eq!(
+            chunk.choices[0].finish_reason.as_deref(),
+            Some("tool_calls")
+        );
+        let logprobs = chunk.choices[0]
+            .logprobs
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap();
+        let content = logprobs.content.as_ref().unwrap().as_ref().unwrap();
+        assert_eq!(content[0].token, "Hello");
+        assert_eq!(
+            chunk.usage.as_ref().unwrap().as_ref().unwrap().total_tokens,
+            21
+        );
+
+        assert_eq!(serde_json::to_value(&chunk).unwrap(), body);
     }
 
     /// Byte-level, not Value-level: some providers' prompt caches hash the

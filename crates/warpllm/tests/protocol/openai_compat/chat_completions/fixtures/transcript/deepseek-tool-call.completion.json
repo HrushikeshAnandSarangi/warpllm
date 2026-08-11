@@ -1,0 +1,36 @@
+{
+  "id": "b7c4e2a1-3f9d-4c8b-9e15-6a2d7f40c3e8",
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "refusal": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_0_5f3a91c2",
+            "type": "function",
+            "function": {
+              "arguments": "{\"city\":\"Seoul\"}",
+              "name": "get_weather"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "created": 1753300000,
+  "model": "deepseek-v4-flash",
+  "object": "chat.completion",
+  "system_fingerprint": "fp_deepseek_v4",
+  "usage": {
+    "completion_tokens": 17,
+    "prompt_tokens": 94,
+    "total_tokens": 111,
+    "prompt_tokens_details": {
+      "cached_tokens": 64
+    }
+  }
+}

@@ -8,6 +8,47 @@ Versions follow [semantic versioning](https://semver.org). While the project is
 pre-1.0, a breaking change bumps the MINOR number: `0.1.x` and `0.2.x` are
 incompatible, and `^0.1` will not upgrade you into one.
 
+## [Unreleased]
+
+Everything under "Changed" is breaking, so this releases as `0.3.0`.
+
+### Added
+
+- **`CreateChatCompletionStreamResponse`**, the reply shape for a chat
+  completion requested with `stream: true`, in all three languages. The request
+  is unchanged — `CreateChatCompletionRequest` already carries `stream` — but
+  upstream the reply is a separate type rather than the whole completion with
+  fields left empty, and warpllm models it the same way: a choice carries a
+  `delta` instead of a `message`, `finish_reason` is null until the last chunk,
+  `usage` is present-but-null on every chunk before it, and a tool call arrives
+  as a fragment keyed by `index` whose `arguments` are split across chunks.
+  Keeping the two types apart is what lets a caller tell a fragment from a
+  finished thing.
+
+  No transport yet: nothing in the SDK returns one of these. This settles the
+  shape, and its generated Python and Node types, so the client work has
+  something fixed to build against.
+
+### Changed
+
+- **Response fields that are optional *and* nullable now tell an absent key
+  from an explicit `null`.** Seven fields on the non-streaming completion
+  change type: `moderation` and `service_tier` on the response, `logprobs` on a
+  choice, `content` and `refusal` on that choice's logprobs, and `audio` and
+  `function_call` on a message.
+
+  Previously a provider that sent `"logprobs": null` was read as having omitted
+  the key, and warpllm re-emitted it omitted. The two states mean different
+  things — for a chunk's `usage`, upstream documents absent as "you never asked
+  for usage" and null as "you did, and this is not the last chunk" — so the
+  round trip now preserves whichever one the provider sent.
+
+  What this looks like per language: in Rust the field becomes
+  `Option<Option<T>>`, so matching on it stops compiling; in TypeScript and
+  Python the value type gains `| null` / `| None`, so a caller who assumed
+  non-null gets a type error; and in the JSON both bindings hand back, a key
+  that used to be dropped now appears as `null` whenever the provider sent it.
+
 ## [0.2.0] - 2026-08-09
 
 The first release with a provider registry. 0.1.4 could reach OpenAI; this can
@@ -108,4 +149,5 @@ environment is not supported. The OpenAI-compatible HTTP gateway
 Early SDK releases serving OpenAI chat completions only, before the provider
 registry existed. See the [release tags](https://github.com/warpllm/warpllm/tags).
 
+[Unreleased]: https://github.com/warpllm/warpllm/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/warpllm/warpllm/compare/v0.1.4...v0.2.0

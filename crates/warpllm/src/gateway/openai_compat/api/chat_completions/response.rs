@@ -43,7 +43,12 @@ pub(crate) fn ingest_response(response: CreateChatCompletionResponse) -> types::
         compat.insert("moderation".into(), plain(&moderation));
     }
     if let Some(tier) = service_tier {
-        compat.insert("service_tier".into(), Value::String(tier));
+        // The outer `Some` is "the key was there"; an explicit null is stashed
+        // as one so the renderer can put it back as one.
+        compat.insert(
+            "service_tier".into(),
+            tier.map_or(Value::Null, Value::String),
+        );
     }
     if let Some(fingerprint) = system_fingerprint {
         compat.insert("system_fingerprint".into(), Value::String(fingerprint));
@@ -255,7 +260,7 @@ pub(crate) fn render_response(
         model: response.model.clone(),
         object,
         moderation: take_typed(&mut unknown_fields, "moderation"),
-        service_tier: take_string(&mut unknown_fields, "service_tier"),
+        service_tier: take_nullable_string(&mut unknown_fields, "service_tier"),
         system_fingerprint: take_string(&mut unknown_fields, "system_fingerprint"),
         usage: response.usage.as_ref().map(|u| render_usage(u, provider)),
         unknown_fields,
@@ -385,6 +390,19 @@ fn render_details<T: DeserializeOwned>(
 fn take_string(fields: &mut UnknownFields, key: &str) -> Option<String> {
     match fields.remove(key) {
         Some(Value::String(value)) => Some(value),
+        _ => None,
+    }
+}
+
+/// [`take_string`] for a field the protocol lets be optional AND nullable:
+/// absent comes back absent, and an explicit `null` comes back as one. The
+/// typed fields get this for free — `take_typed::<Option<T>>` reads a stashed
+/// `null` as `Some(None)` — and only a bare string needs it spelled out.
+fn take_nullable_string(fields: &mut UnknownFields, key: &str) -> Option<Option<String>> {
+    match fields.remove(key) {
+        Some(Value::String(value)) => Some(Some(value)),
+        Some(Value::Null) => Some(None),
+        // Absent, or corrupted past its wire type: drop the field.
         _ => None,
     }
 }
