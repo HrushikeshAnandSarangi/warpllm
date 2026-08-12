@@ -14,6 +14,31 @@ Everything under "Changed" is breaking, so this releases as `0.3.0`.
 
 ### Added
 
+- **Kimi, and the rest of OpenAI's chat-completion roster.** A new `kimi`
+  provider, reached at `api.moonshot.ai` with `MOONSHOT_API_KEY`, serving
+  `kimi/kimi-k3`, `kimi/kimi-k2.6`, and the two `kimi-k2.7-code` variants —
+  plus `kimi-k3`, `kimi-k2.6` and `kimi-k2.7-code` through OpenRouter, added
+  to that provider's curated set. On the OpenAI side the roster grows from
+  five models to eighteen: the 4.1 and 4o families, GPT-5 through 5.5, and
+  o3.
+
+  Every entry was checked against the provider's own model page for whether it
+  actually serves chat completions, and its context window taken from wherever
+  the provider publishes an exact figure — for Kimi that is the pricing page,
+  since the model list rounds to "1M" and "256k". OpenRouter entries record
+  the narrowest limit any endpoint behind the slug offers, since a slug fans
+  out across every host serving those weights and an unpinned request may land
+  on any of them. Models that serve only OpenAI's Responses API, that are
+  gated, or that the provider has already scheduled for retirement are
+  deliberately absent, and `specs.yaml` records which and why rather than
+  leaving the gap to be guessed at.
+
+- **`deprecation_date` on a model entry**, `YYYY-MM-DD`, recording the day a
+  provider stops serving a model, and readable in Rust through
+  `ModelSpec::deprecation_date()`. Nothing acts on it: routing does not consult
+  it, and the loader takes the string as written without checking it against a
+  calendar.
+
 - **`CreateChatCompletionStreamResponse`**, the reply shape for a chat
   completion requested with `stream: true`, in all three languages. The request
   is unchanged — `CreateChatCompletionRequest` already carries `stream` — but
@@ -28,6 +53,19 @@ Everything under "Changed" is breaking, so this releases as `0.3.0`.
   No transport yet: nothing in the SDK returns one of these. This settles the
   shape, and its generated Python and Node types, so the client work has
   something fixed to build against.
+
+### Fixed
+
+- **`openrouter/anthropic/claude-sonnet-4` recorded a 1,000,000 token context
+  window it could not guarantee**, and now records 200,000. The slug is served
+  by two platforms: Vertex offers the larger window, Bedrock 200,000, and an
+  unpinned request may be routed to either. A caller sizing a prompt against
+  the old figure could have it rejected upstream.
+
+  This is the general hazard with an aggregator, and `specs.yaml` now says so
+  where the OpenRouter entries live: take limits from the per-slug
+  `endpoints` listing and record the narrowest, because one slug fans out
+  across every host serving it.
 
 ### Changed
 

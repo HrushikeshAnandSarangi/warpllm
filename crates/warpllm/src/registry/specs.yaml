@@ -123,6 +123,63 @@ providers:
           max_output_tokens: 384000
           max_concurrent_requests: 500
 
+  # <https://platform.kimi.ai/docs/models> (checked 2026-08-11). The API is
+  # OpenAI-compatible. The platform is branded Kimi while the host kept
+  # Moonshot's name, which is why the two disagree below.
+  # <https://platform.kimi.ai/docs/api/chat> — base URL and MOONSHOT_API_KEY
+  #
+  # Windows come from each model's PRICING page, which publishes the exact
+  # figure; the model list rounds the same numbers to "1M" and "256k". Both
+  # round down from a power of two, so the exact ones are what is recorded.
+  #
+  # No `max_concurrent_requests`: Kimi documents concurrency per account tier,
+  # not per model. <https://platform.kimi.ai/docs/pricing/limits>
+  #
+  # No `max_output_tokens` on any entry: Kimi publishes no output ceiling for
+  # any model. What the docs give is `max_completion_tokens`, the request
+  # parameter — a default of 32,768, or 131,072 for kimi-k3, and for kimi-k3
+  # an upper bound of 1,048,576 on what may be ASKED for. That is the range
+  # the parameter accepts, described as "the length of tokens you expect us to
+  # return", not a length the model is documented to reach.
+  # <https://platform.kimi.ai/docs/api/chat>
+  #
+  # Deliberately absent, checked 2026-08-11:
+  # - kimi-k2.5 and the whole moonshot-v1 series, `-vision-preview` variants
+  #   included: no longer available to newly registered users, and sunset
+  #   August 31 — the docs give the day without the year. Registering a model
+  #   a new account cannot reach would fail every request made to it.
+  # - Already discontinued: the kimi-k2 series (2026-05-25), kimi-latest
+  #   (2026-01-28), kimi-thinking-preview (2025-11-11).
+  kimi:
+    base_url: "https://api.moonshot.ai/v1"
+    env_api_key: MOONSHOT_API_KEY
+    models:
+      # <https://platform.kimi.ai/docs/pricing/chat-k26>
+      kimi/kimi-k2.6:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 262144
+      # <https://platform.kimi.ai/docs/pricing/chat-k27-code>
+      kimi/kimi-k2.7-code:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 262144
+      # The same limits as kimi-k2.7-code; the two differ in throughput.
+      # <https://platform.kimi.ai/docs/pricing/chat-k27-code>
+      kimi/kimi-k2.7-code-highspeed:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 262144
+      # <https://platform.kimi.ai/docs/pricing/chat-k3>
+      kimi/kimi-k3:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 1048576
+
   # <https://developers.openai.com/api/docs/models/all> (checked 2026-08-11).
   # Every model below was confirmed on its own model page to mark
   # `v1/chat/completions` supported; each entry carries that page's link.
@@ -308,9 +365,19 @@ providers:
   # An aggregator, so each entry below is a curated pick from its catalog and
   # there is no `openrouter/*` catch-all. OpenRouter's own identifier is a
   # two-segment slug, which the key's last-segment default would truncate, so
-  # every entry sets `model:` to the full slug. Limits come from each model's
-  # OpenRouter page; it publishes no per-slug concurrency ceiling, only
-  # per-key rate limits on the caller's account.
+  # every entry sets `model:` to the full slug. It publishes no per-slug
+  # concurrency ceiling, only per-key rate limits on the caller's account.
+  #
+  # Take limits from `/api/v1/models/<slug>/endpoints`, and record the
+  # NARROWEST any endpoint offers. A slug is not one model on one host: it
+  # fans out across every provider serving those weights, and they disagree —
+  # kimi-k2.6 alone runs across 21 endpoints whose max output spans 16,384 to
+  # 262,144. An unpinned request may land on any of them, so the smallest
+  # figure is the only one a caller can rely on, and a limit the endpoints
+  # disagree about too widely is better omitted than promised.
+  #
+  # Do NOT read `top_provider` from `/api/v1/models`. It is one endpoint's
+  # numbers, not the slug's, and it reads like a summary of them.
   openrouter:
     base_url: "https://openrouter.ai/api/v1"
     env_api_key: OPENROUTER_API_KEY
@@ -324,14 +391,17 @@ providers:
         capabilities:
           max_input_tokens: 200000
           max_output_tokens: 32000
-      # Checked 2026-08-07: 1M context, 64K max output.
-      # <https://openrouter.ai/anthropic/claude-sonnet-4>
+      # Checked 2026-08-11, 5 endpoints, and they are two platforms counted
+      # per region: Vertex serves a 1,000,000 window, Bedrock 200,000. An
+      # unpinned request may get either, so 200,000 is what is recorded. All
+      # five agree on 64,000 max output.
+      # <https://openrouter.ai/api/v1/models/anthropic/claude-sonnet-4/endpoints>
       openrouter/anthropic/claude-sonnet-4:
         supported_apis:
           - {api: openai_compat_chat_completions}
         model: anthropic/claude-sonnet-4
         capabilities:
-          max_input_tokens: 1000000
+          max_input_tokens: 200000
           max_output_tokens: 64000
       # OpenRouter's alias for letting IT pick the model per request: the wire
       # name is the key's last segment, and the limits are whichever backend
@@ -348,6 +418,43 @@ providers:
         capabilities:
           max_input_tokens: 1048576
           max_output_tokens: 65536
+      # Kimi through the aggregator. Every figure below is the NARROWEST any
+      # endpoint serving the slug offers, because an unpinned request may land
+      # on any of them — see the note above the provider.
+      #
+      # Checked 2026-08-11, 21 endpoints: windows are 256,000 (StreamLake,
+      # Venice), 262,000 (BaseTen) or 262,144, so 256,000 is what a caller can
+      # count on. No max output: the endpoints span 16,384 (DeepInfra) to
+      # 262,144, a sixteenfold spread with no model-level ceiling behind it.
+      # <https://openrouter.ai/api/v1/models/moonshotai/kimi-k2.6/endpoints>
+      openrouter/moonshotai/kimi-k2.6:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        model: moonshotai/kimi-k2.6
+        capabilities:
+          max_input_tokens: 256000
+      # Checked 2026-08-11, 15 endpoints: windows are 256,000 or 262,144, and
+      # max output spans 16,384 to 262,144. The `:batch` variant of this slug
+      # is left off — it is OpenRouter's batch surface, not chat completions.
+      # <https://openrouter.ai/api/v1/models/moonshotai/kimi-k2.7-code/endpoints>
+      openrouter/moonshotai/kimi-k2.7-code:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        model: moonshotai/kimi-k2.7-code
+        capabilities:
+          max_input_tokens: 256000
+      # Checked 2026-08-11, 13 endpoints. Moonshot's own window is 1,048,576
+      # and most endpoints match it, but Sail Research serves 974,842 and
+      # Together 1,000,000, so that is the figure recorded — the alternative
+      # is promising a window a routed request may not get. Max output spans
+      # 16,384 to 1,048,576.
+      # <https://openrouter.ai/api/v1/models/moonshotai/kimi-k3/endpoints>
+      openrouter/moonshotai/kimi-k3:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        model: moonshotai/kimi-k3
+        capabilities:
+          max_input_tokens: 974842
       # Checked 2026-08-07: `gpt-5.6` is OpenAI's alias for `gpt-5.6-sol`, so
       # these are Sol's limits — 1M context, 128K max output.
       # <https://openrouter.ai/openai/gpt-5.6-sol>
