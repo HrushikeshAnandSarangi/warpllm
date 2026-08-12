@@ -217,13 +217,17 @@ mod tests {
         let registry = load::load(yaml).unwrap();
         assert_eq!(
             providers(&registry),
-            vec!["deepseek", "openai", "openrouter"]
+            vec!["deepseek", "kimi", "openai", "openrouter"]
         );
         assert_eq!(
             keys(&registry),
             vec![
                 "deepseek/deepseek-v4-flash",
                 "deepseek/deepseek-v4-pro",
+                "kimi/kimi-k2.6",
+                "kimi/kimi-k2.7-code",
+                "kimi/kimi-k2.7-code-highspeed",
+                "kimi/kimi-k3",
                 "openai/gpt-4.1",
                 "openai/gpt-4.1-mini",
                 "openai/gpt-4o",
@@ -246,6 +250,9 @@ mod tests {
                 "openrouter/anthropic/claude-sonnet-4",
                 "openrouter/auto",
                 "openrouter/google/gemini-2.5-pro",
+                "openrouter/moonshotai/kimi-k2.6",
+                "openrouter/moonshotai/kimi-k2.7-code",
+                "openrouter/moonshotai/kimi-k3",
                 "openrouter/openai/gpt-5.6",
                 "openrouter/~deepseek/deepseek-v4-flash-latest",
             ]

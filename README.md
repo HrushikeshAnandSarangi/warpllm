@@ -94,6 +94,7 @@ the provider needs and change the model string. Nothing else moves.
 | --- | --- |
 | `openai/gpt-5-nano` | `OPENAI_API_KEY` |
 | `deepseek/deepseek-v4-flash` | `DEEPSEEK_API_KEY` |
+| `kimi/kimi-k3` | `MOONSHOT_API_KEY` |
 | `openrouter/anthropic/claude-sonnet-4` | `OPENROUTER_API_KEY` |
 
 The `provider/` prefix is required. warpllm matches the whole string against its
@@ -132,6 +133,7 @@ This project is to lay out the most resilient open source productionization laye
 | OpenAI chat completions, non-streaming | Yes | Yes |
 | `provider/model` routing strings | Provider registry | Provider registry |
 | DeepSeek, OpenRouter | Yes | Yes |
+| Kimi | — | Yes |
 | OpenAI-compatible HTTP gateway | — | Unreleased |
 | Streaming | — | — |
 | Failover, load balancing, caching, metrics | — | — |
