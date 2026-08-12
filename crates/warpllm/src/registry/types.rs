@@ -108,6 +108,15 @@ pub struct ModelSpec {
     /// a load failure rather than a silent claim on everything its host does.
     pub(crate) supported_apis: Vec<SupportedApi>,
     pub(crate) capabilities: Capabilities,
+    /// The day the provider stops serving this model, `YYYY-MM-DD`, when one
+    /// has been announced.
+    ///
+    /// Where a provider publishes two dates — the day it announces the
+    /// deprecation and the later day access actually ends — this holds the
+    /// second. A deprecated model still answers, so the date worth recording
+    /// is the one after which routing to it breaks. `None` is the ordinary
+    /// case and means nothing is scheduled, never that the model is permanent.
+    pub(crate) deprecation_date: Option<String>,
 }
 
 impl ModelSpec {
@@ -130,6 +139,17 @@ impl ModelSpec {
     /// wire format at all.
     pub fn supported_apis(&self) -> &[SupportedApi] {
         &self.supported_apis
+    }
+
+    /// The day the provider stops serving this model, `YYYY-MM-DD`, or `None`
+    /// when the roster records no scheduled retirement.
+    ///
+    /// Nothing acts on it: routing does not consult it, and a model whose date
+    /// has passed still resolves. The string is whatever the roster wrote —
+    /// the loader does not check it against a calendar — so a caller reading
+    /// it parses it.
+    pub fn deprecation_date(&self) -> Option<&str> {
+        self.deprecation_date.as_deref()
     }
 
     /// This model's entry for `api`, or `None` if it does not serve it. The

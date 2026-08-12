@@ -72,6 +72,7 @@ struct ModelEntry {
     /// not want.
     #[serde(default = "Capabilities::blank")]
     capabilities: Capabilities,
+    deprecation_date: Option<String>,
 }
 
 /// Reads the roster into the provider and model tables.
@@ -126,6 +127,7 @@ fn build(key: &str, provider: &str, entry: ModelEntry) -> Result<ModelSpec, Stri
         model: entry.model.unwrap_or_else(|| name.to_string()),
         supported_apis: entry.supported_apis,
         capabilities: entry.capabilities,
+        deprecation_date: entry.deprecation_date,
     })
 }
 
@@ -244,6 +246,18 @@ mod tests {
         assert_eq!(spec.model(), "plain");
         assert_eq!(spec.capabilities().max_input_tokens(), None);
         assert_eq!(spec.capabilities().max_concurrent_requests(), None);
+        assert_eq!(spec.deprecation_date(), None);
+    }
+
+    /// A recorded retirement reaches the spec verbatim. Nothing else reads the
+    /// field, so this is what keeps it from silently ceasing to load.
+    #[test]
+    fn a_deprecation_date_is_read_when_present() {
+        let registry = clean(&with(&format!(
+            "      demo/plain:\n{CHAT}        deprecation_date: \"2026-10-23\"\n"
+        )));
+        let spec = registry.models.get("demo/plain").unwrap();
+        assert_eq!(spec.deprecation_date(), Some("2026-10-23"));
     }
 
     /// Limits are per model and nothing else is: the shipped V4 pair is two
