@@ -195,6 +195,7 @@ mod tests {
             model: "demo-embed".into(),
             supported_apis,
             capabilities: Capabilities::blank(),
+            deprecation_date: None,
         }))
     }
 
@@ -365,6 +366,7 @@ mod tests {
                 api: Api::OpenAiCompatChatCompletions,
             }],
             capabilities: Capabilities::blank(),
+            deprecation_date: None,
         }));
         let client = client(ClientConfig::default());
         let request = CreateChatCompletionRequest {

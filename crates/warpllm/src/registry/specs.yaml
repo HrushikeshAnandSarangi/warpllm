@@ -31,18 +31,37 @@
 #
 # Model fields
 # ------------
-#   supported_apis  Required. Every surface this model serves, each written
-#                   `- {api: <surface>}`. A model serves exactly what it lists.
-#   model           Optional. The name sent upstream. Defaults to the key's
-#                   last segment; set it when warpllm's alias differs from the
-#                   provider's own name.
-#   capabilities    Optional, and so is each limit in it: max_input_tokens,
-#                   max_output_tokens, max_concurrent_requests.
-#                   `max_input_tokens` is the provider's context window, taken
-#                   verbatim. A provider's own "maximum input tokens" is
-#                   usually the window minus its output ceiling; the window is
-#                   what belongs here, since a completion may spend far fewer
-#                   output tokens than the ceiling allows.
+#   supported_apis    Required. Every surface this model serves, each written
+#                     `- {api: <surface>}`. A model serves exactly what it
+#                     lists.
+#   model             Optional. The name sent upstream. Defaults to the key's
+#                     last segment; set it when warpllm's alias differs from
+#                     the provider's own name.
+#   deprecation_date  Optional, `YYYY-MM-DD`. The day the provider stops
+#                     serving this model, when one has been announced. Where a
+#                     provider publishes two dates — the announcement, and the
+#                     later day access ends — record the second: a deprecated
+#                     model still answers, and the day routing to it breaks is
+#                     the one worth having. Absent is the ordinary case and
+#                     means nothing is scheduled, never that the model is
+#                     permanent.
+#
+#                     Nothing acts on it: an entry keeps resolving past its
+#                     date, and removing it is a deliberate edit. The value is
+#                     taken as written and never checked against a calendar.
+#
+#                     Look for it on the provider's DEPRECATIONS page, not the
+#                     model's own page. OpenAI's model pages say nothing about
+#                     a retirement even when one is weeks away, so a new entry
+#                     checked only against its model page will look healthy and
+#                     be dead on arrival.
+#   capabilities      Optional, and so is each limit in it: max_input_tokens,
+#                     max_output_tokens, max_concurrent_requests.
+#                     `max_input_tokens` is the provider's context window,
+#                     taken verbatim. A provider's own "maximum input tokens"
+#                     is usually the window minus its output ceiling; the
+#                     window is what belongs here, since a completion may spend
+#                     far fewer output tokens than the ceiling allows.
 #
 # Surfaces
 # --------
@@ -104,9 +123,12 @@ providers:
           max_output_tokens: 384000
           max_concurrent_requests: 500
 
-  # <https://developers.openai.com/api/docs/models> (checked 2026-08-09). These
-  # models also serve the Responses API; it is left off until warpllm
-  # implements that surface.
+  # <https://developers.openai.com/api/docs/models/all> (checked 2026-08-11).
+  # Every model below was confirmed on its own model page to mark
+  # `v1/chat/completions` supported; each entry carries that page's link.
+  #
+  # They also serve the Responses API; it is left off until warpllm implements
+  # that surface.
   #
   # The windows below are OpenAI's context windows. The "maximum input tokens"
   # shown beside each one is that window minus the model's output ceiling, so
@@ -115,17 +137,130 @@ providers:
   # No `max_concurrent_requests` anywhere below: OpenAI documents throughput as
   # per-account tier rate limits, not a per-model ceiling on requests in
   # flight.
+  #
+  # Deliberately absent, each checked on its own model page 2026-08-11:
+  # - Models whose page marks `v1/chat/completions` "Not supported" — they
+  #   serve the Responses API instead: gpt-5-pro, gpt-5.2-pro, gpt-5.3-codex,
+  #   gpt-5.4-pro, gpt-5.5-pro, o3-pro. Note the pinned `openai` SDK's
+  #   `ChatModel` union disagrees and lists gpt-5.2-pro; the docs are the
+  #   source of truth, and the SDK is only an oracle.
+  # - Gated behind the Daybreak programme, and not on chat completions either:
+  #   daybreak-blue-latest, daybreak-red-latest, gpt-5.6-cyber.
+  # - Open-weight downloads rather than anything api.openai.com serves:
+  #   gpt-oss-120b, gpt-oss-20b.
+  # - Everything on a surface warpllm has no `api:` for: embeddings,
+  #   moderation, images, audio, realtime, and legacy completions.
+  # - Models already deprecated: gpt-4.1-nano and o4-mini both stop serving
+  #   2026-10-23, and OpenAI names gpt-5.6-luna and gpt-5.6-terra as the
+  #   replacements. Registering a name that breaks within the quarter would be
+  #   handing callers a migration; both replacements are below. Neither model's
+  #   own page mentions it — the deprecations page is the only place it
+  #   appears.
+  #   <https://developers.openai.com/api/docs/deprecations>
+  # - chat-latest. It serves chat completions, but OpenAI moves the snapshot
+  #   underneath it and points production traffic at GPT-5.6 instead, so the
+  #   limits recorded here would go stale without the file changing.
+  # - OpenAI's deprecated roster, and dated snapshots such as
+  #   gpt-5-2025-08-07. The aliases below are what callers name.
   openai:
     base_url: "https://api.openai.com/v1"
     env_api_key: OPENAI_API_KEY
     models:
-      # Sorts before the 5.6 family because `-` (0x2D) precedes `.` (0x2E).
+      # The 4.1 family, both sharing one pair of limits. The window is
+      # 1,047,576 rather than a round million, and is recorded as published.
+      # <https://developers.openai.com/api/docs/models/gpt-4.1>
+      openai/gpt-4.1:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 1047576
+          max_output_tokens: 32768
+      # <https://developers.openai.com/api/docs/models/gpt-4.1-mini>
+      openai/gpt-4.1-mini:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 1047576
+          max_output_tokens: 32768
+      # <https://developers.openai.com/api/docs/models/gpt-4o>
+      openai/gpt-4o:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 128000
+          max_output_tokens: 16384
+      # <https://developers.openai.com/api/docs/models/gpt-4o-mini>
+      openai/gpt-4o-mini:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 128000
+          max_output_tokens: 16384
+      # The GPT-5 family. These sort before the 5.1+ entries because `-`
+      # (0x2D) precedes `.` (0x2E).
+      # <https://developers.openai.com/api/docs/models/gpt-5>
+      openai/gpt-5:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 400000
+          max_output_tokens: 128000
+      # <https://developers.openai.com/api/docs/models/gpt-5-mini>
+      openai/gpt-5-mini:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 400000
+          max_output_tokens: 128000
       # <https://developers.openai.com/api/docs/models/gpt-5-nano>
       openai/gpt-5-nano:
         supported_apis:
           - {api: openai_compat_chat_completions}
         capabilities:
           max_input_tokens: 400000
+          max_output_tokens: 128000
+      # <https://developers.openai.com/api/docs/models/gpt-5.1>
+      openai/gpt-5.1:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 400000
+          max_output_tokens: 128000
+      # <https://developers.openai.com/api/docs/models/gpt-5.2>
+      openai/gpt-5.2:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 400000
+          max_output_tokens: 128000
+      # 5.4 carries the larger window; its mini and nano do not.
+      # <https://developers.openai.com/api/docs/models/gpt-5.4>
+      openai/gpt-5.4:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 1050000
+          max_output_tokens: 128000
+      # <https://developers.openai.com/api/docs/models/gpt-5.4-mini>
+      openai/gpt-5.4-mini:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 400000
+          max_output_tokens: 128000
+      # <https://developers.openai.com/api/docs/models/gpt-5.4-nano>
+      openai/gpt-5.4-nano:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 400000
+          max_output_tokens: 128000
+      # <https://developers.openai.com/api/docs/models/gpt-5.5>
+      openai/gpt-5.5:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 1050000
           max_output_tokens: 128000
       # The GPT-5.6 family, all three sharing one pair of limits. `gpt-5.6` is
       # OpenAI's alias for Sol rather than a model of its own, so it is
@@ -158,6 +293,15 @@ providers:
         capabilities:
           max_input_tokens: 1050000
           max_output_tokens: 128000
+      # The last o-series model here: o4-mini shuts down, and every `-pro`
+      # sibling serves the Responses API instead.
+      # <https://developers.openai.com/api/docs/models/o3>
+      openai/o3:
+        supported_apis:
+          - {api: openai_compat_chat_completions}
+        capabilities:
+          max_input_tokens: 200000
+          max_output_tokens: 100000
 
   # <https://openrouter.ai/docs/api-reference> (checked 2026-08-06).
   #

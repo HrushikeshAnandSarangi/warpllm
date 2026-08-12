@@ -224,11 +224,24 @@ mod tests {
             vec![
                 "deepseek/deepseek-v4-flash",
                 "deepseek/deepseek-v4-pro",
+                "openai/gpt-4.1",
+                "openai/gpt-4.1-mini",
+                "openai/gpt-4o",
+                "openai/gpt-4o-mini",
+                "openai/gpt-5",
+                "openai/gpt-5-mini",
                 "openai/gpt-5-nano",
+                "openai/gpt-5.1",
+                "openai/gpt-5.2",
+                "openai/gpt-5.4",
+                "openai/gpt-5.4-mini",
+                "openai/gpt-5.4-nano",
+                "openai/gpt-5.5",
                 "openai/gpt-5.6",
                 "openai/gpt-5.6-luna",
                 "openai/gpt-5.6-sol",
                 "openai/gpt-5.6-terra",
+                "openai/o3",
                 "openrouter/anthropic/claude-opus-4",
                 "openrouter/anthropic/claude-sonnet-4",
                 "openrouter/auto",
@@ -366,9 +379,13 @@ mod tests {
 
     /// The registry is closed: an unlisted name is an error, not a fallback.
     /// `openai/*` is in the list because a pattern matches nothing either.
+    ///
+    /// `openai/gpt-5-pro` is real upstream and still rejected here: it serves
+    /// the Responses API and not chat completions, so the roster leaves it out
+    /// rather than register a name every request would fail on.
     #[test]
     fn unregistered_models_are_rejected() {
-        for model_str in ["openai/gpt-4o", "deepseek/deepseek-v5", "openai/*"] {
+        for model_str in ["openai/gpt-5-pro", "deepseek/deepseek-v5", "openai/*"] {
             let msg = fetch_model(model_str).unwrap_err().to_string();
             assert!(msg.contains(model_str), "{msg}");
             assert!(msg.contains("no registered model spec"), "{msg}");
