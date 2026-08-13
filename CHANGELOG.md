@@ -8,6 +8,27 @@ Versions follow [semantic versioning](https://semver.org). While the project is
 pre-1.0, a breaking change bumps the MINOR number: `0.1.x` and `0.2.x` are
 incompatible, and `^0.1` will not upgrade you into one.
 
+## [0.3.1] - 2026-08-13
+
+Nothing in any of the three packages changed. 0.3.0 reached crates.io and PyPI
+and did not reach npm: the npm workflow runs the Node suite on Windows before
+publishing, and one test read the recorded SSE transcripts by splitting on `\n`
+alone. A Windows checkout stores those fixtures with CRLF, which left a `\r` on
+every payload and stopped the `[DONE]` sentinel from matching — three tests
+failed against a corpus the Rust suite reads without complaint.
+
+So this release is 0.3.0 for npm, where it is the first version carrying
+streaming, and 0.3.0 with a test fix everywhere else. Read the 0.3.0 notes below
+for what actually landed; upgrading from npm `0.2.0` is the breaking step those
+notes describe.
+
+### Fixed
+
+- The Node stream-consumer test splits on `\r?\n`, which is what SSE terminates
+  a line with and what Rust's `str::lines()` already handled.
+- `.gitattributes` holds `*.sse` fixtures to LF on every platform, so all three
+  language suites read the corpus as it was recorded.
+
 ## [0.3.0] - 2026-08-13
 
 The release that adds streaming. 0.2.0 could only hand back a whole reply; this
@@ -294,5 +315,6 @@ environment is not supported. The OpenAI-compatible HTTP gateway
 Early SDK releases serving OpenAI chat completions only, before the provider
 registry existed. See the [release tags](https://github.com/warpllm/warpllm/tags).
 
+[0.3.1]: https://github.com/warpllm/warpllm/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/warpllm/warpllm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/warpllm/warpllm/compare/v0.1.4...v0.2.0
