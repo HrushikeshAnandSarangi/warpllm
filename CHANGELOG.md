@@ -8,9 +8,13 @@ Versions follow [semantic versioning](https://semver.org). While the project is
 pre-1.0, a breaking change bumps the MINOR number: `0.1.x` and `0.2.x` are
 incompatible, and `^0.1` will not upgrade you into one.
 
-## [Unreleased]
+## [0.3.0] - 2026-08-13
 
-Everything under "Changed" is breaking, so this releases as `0.3.0`.
+The release that adds streaming. 0.2.0 could only hand back a whole reply; this
+streams chat completions from every surface — the Rust core, both SDKs, and the
+OpenAI-compatible gateway.
+
+Everything under "Changed" is breaking.
 
 ### Added
 
@@ -290,5 +294,5 @@ environment is not supported. The OpenAI-compatible HTTP gateway
 Early SDK releases serving OpenAI chat completions only, before the provider
 registry existed. See the [release tags](https://github.com/warpllm/warpllm/tags).
 
-[Unreleased]: https://github.com/warpllm/warpllm/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/warpllm/warpllm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/warpllm/warpllm/compare/v0.1.4...v0.2.0
