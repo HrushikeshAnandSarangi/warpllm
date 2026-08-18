@@ -60,6 +60,20 @@ pub(super) fn models(keys: &[&str]) -> String {
     keys.iter().map(|key| model(key)).collect()
 }
 
+/// A balanced model entry: `demo/balanced` load-balances across `demo/plain`
+/// (weight 3) and `demo/fast` (weight 1). Both targets must exist in the
+/// same roster.
+#[allow(dead_code)]
+pub(super) fn balanced() -> String {
+    format!(
+        "{with_plain}{with_fast}      demo/balanced:\n{CHAT}        balance:\n          \
+         - {{target: demo/plain, weight: 3}}\n          - {{target: demo/fast, weight: 1}}\n",
+        with_plain = model("demo/plain"),
+        with_fast = model("demo/fast"),
+        CHAT = CHAT,
+    )
+}
+
 pub(super) fn with(models: &str) -> String {
     format!("{PROVIDER}{models}")
 }

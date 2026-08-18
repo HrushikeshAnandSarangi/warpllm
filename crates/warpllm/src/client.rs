@@ -1,8 +1,10 @@
 //! The client: one pooled HTTP connection set, one entrypoint.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::auth::Authenticator;
+use crate::balancer::{Balancer, Candidate};
 use crate::config::{ClientConfig, DEFAULT_TIMEOUT_SECS};
 use crate::credentials::Credentials;
 use crate::error::{Error, Result};
@@ -17,6 +19,9 @@ pub struct Client {
     http: reqwest::Client,
     config: ClientConfig,
     credentials: Credentials,
+    /// Per-model balancers, built at construction from `balance:` entries in
+    /// the roster. Only models with balance entries have an entry here.
+    balancers: HashMap<String, Balancer>,
 }
 
 /// Everything one validated request needs to reach its model: where to send it,
@@ -58,10 +63,12 @@ impl Client {
             .build()
             .map_err(|e| Error::Internal(e.to_string()))?;
         let credentials = Credentials::resolve(config.providers.as_ref());
+        let balancers = Self::build_balancers()?;
         Ok(Self {
             http,
             config,
             credentials,
+            balancers,
         })
     }
 
@@ -104,6 +111,41 @@ impl Client {
             }
         }
         Ok(())
+    }
+
+    /// Builds balancers for every model that has `balance:` entries.
+    ///
+    /// Runs once at construction, so the candidate set is fixed for the life
+    /// of the client. Each target `model_str` is looked up in the registry
+    /// and resolved to its provider/model pair.
+    fn build_balancers() -> Result<HashMap<String, Balancer>> {
+        let mut balancers = HashMap::new();
+        for (model_str, spec) in registry::all_models() {
+            let Some(balance) = spec.balance() else {
+                continue;
+            };
+            let mut candidates = Vec::with_capacity(balance.len());
+            for entry in balance {
+                let (provider, model) = fetch_model(&entry.target).map_err(|_| {
+                    Error::InvalidInput(format!(
+                        "`{model_str}`: balance target `{}` is not a registered model",
+                        entry.target
+                    ))
+                })?;
+                candidates.push(Candidate {
+                    provider,
+                    model,
+                    weight: entry.weight,
+                });
+            }
+            if candidates.is_empty() {
+                return Err(Error::InvalidInput(format!(
+                    "`{model_str}`: balance has no valid candidates"
+                )));
+            }
+            balancers.insert(model_str.to_string(), Balancer::new(candidates));
+        }
+        Ok(balancers)
     }
 
     /// Serves one OpenAI-compatible chat completion.
@@ -219,6 +261,18 @@ impl Client {
     /// entrypoints differ in exactly one argument — and a fifth gate added to
     /// one copy and not the other is a hole nothing would catch.
     fn validate(&self, requested: &str, api: Api) -> Result<ModelDefinition<'_>> {
+        // Balanced model: smooth weighted round-robin picks the head candidate.
+        if let Some(balancer) = self.balancers.get(requested) {
+            let candidate = balancer.select();
+            self.validate_declared(candidate.provider, requested)?;
+            Self::validate_api(candidate.model, api, candidate.provider, requested)?;
+            return Ok(ModelDefinition {
+                provider: candidate.provider,
+                model: candidate.model,
+                auth: self.authenticator(candidate.provider)?,
+            });
+        }
+        // Unchanged single-model path.
         let (provider, model) = fetch_model(requested)?;
         self.validate_declared(provider, requested)?;
         Self::validate_api(model, api, provider, requested)?;
@@ -412,6 +466,7 @@ mod tests {
             supported_apis,
             capabilities: Capabilities::blank(),
             deprecation_date: None,
+            balance: None,
         }))
     }
 
@@ -781,6 +836,7 @@ mod tests {
             }],
             capabilities: Capabilities::blank(),
             deprecation_date: None,
+            balance: None,
         }));
         let client = client(ClientConfig::default());
         let request = CreateChatCompletionRequest {
