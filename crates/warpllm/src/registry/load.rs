@@ -15,9 +15,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use super::types::{
-    BalanceCandidate, Capabilities, ModelSpec, ProviderSpec, Registry, SupportedApi,
-};
+use super::types::{Capabilities, ModelSpec, ProviderSpec, Registry, SupportedApi};
 
 /// The whole roster: providers, each holding the models routable under it.
 ///
@@ -55,8 +53,7 @@ struct ProviderEntry {
 }
 
 /// One model as written: which surfaces it serves, what it ships upstream if
-/// that differs from its key, whatever limits are published for it, and which
-/// other models it load-balances across.
+/// that differs from its key, and whatever limits are published for it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModelEntry {
@@ -76,12 +73,6 @@ struct ModelEntry {
     #[serde(default = "Capabilities::blank")]
     capabilities: Capabilities,
     deprecation_date: Option<String>,
-    /// Weighted round-robin candidates for load balancing. Each candidate
-    /// names a full `model_str` and a relative weight. The balancer resolves
-    /// all targets to provider/model pairs at client construction. Absent
-    /// means this model is served by exactly one provider (the ordinary case).
-    #[serde(default)]
-    balance: Option<Vec<BalanceCandidate>>,
 }
 
 /// Reads the roster into the provider and model tables.
@@ -109,9 +100,6 @@ pub(super) fn load(yaml: &str) -> Result<Registry, String> {
             },
         );
     }
-    // Validate balance targets after all models are loaded, so every target
-    // can be looked up regardless of declaration order.
-    validate_balance_targets(&registry)?;
     Ok(registry)
 }
 
@@ -140,7 +128,6 @@ fn build(key: &str, provider: &str, entry: ModelEntry) -> Result<ModelSpec, Stri
         supported_apis: entry.supported_apis,
         capabilities: entry.capabilities,
         deprecation_date: entry.deprecation_date,
-        balance: entry.balance,
     })
 }
 
@@ -184,32 +171,6 @@ fn validate_model(key: &str, provider: &str) -> Result<(), String> {
     // absent.
     if name.split('/').any(str::is_empty) {
         return Err("an empty path segment".into());
-    }
-    Ok(())
-}
-
-/// Validates that every balance target is a registered model and every weight
-/// is positive. Runs after all models are loaded so targets can be looked up
-/// regardless of declaration order.
-fn validate_balance_targets(registry: &Registry) -> Result<(), String> {
-    for (key, spec) in &registry.models {
-        let Some(balance) = &spec.balance else {
-            continue;
-        };
-        for candidate in balance {
-            if !registry.models.contains_key(&candidate.target) {
-                return Err(format!(
-                    "`{key}`: balance target `{}` is not a registered model",
-                    candidate.target
-                ));
-            }
-            if candidate.weight == 0 {
-                return Err(format!(
-                    "`{key}`: balance candidate `{}` has weight 0; weights must be positive",
-                    candidate.target
-                ));
-            }
-        }
     }
     Ok(())
 }
@@ -596,83 +557,5 @@ mod tests {
         let err = load(&PROVIDER.replace("  demo:", "  demo/:")).unwrap_err();
         assert!(err.contains("a provider name is one segment"), "{err}");
         assert!(err.contains("write `demo`"), "{err}");
-    }
-
-    // ----------------------------------------------------------- balance
-
-    /// A balance field with valid targets and weights loads cleanly.
-    #[test]
-    fn a_valid_balance_field_is_parsed() {
-        let yaml = with(&format!(
-            "      demo/plain:\n{CHAT}        balance:\n          \
-             - {{target: demo/fast, weight: 3}}\n          - {{target: demo/plain, weight: 1}}\n      \
-             demo/fast:\n{CHAT}",
-            CHAT = CHAT,
-        ));
-        let registry = load(&yaml).unwrap();
-        let spec = registry.models.get("demo/plain").unwrap();
-        let balance = spec.balance().expect("has balance");
-        assert_eq!(balance.len(), 2);
-        assert_eq!(balance[0].target(), "demo/fast");
-        assert_eq!(balance[0].weight(), 3);
-        assert_eq!(balance[1].target(), "demo/plain");
-        assert_eq!(balance[1].weight(), 1);
-    }
-
-    /// Weight defaults to 1 when omitted.
-    #[test]
-    fn balance_weight_defaults_to_one() {
-        let yaml = with(&format!(
-            "      demo/plain:\n{CHAT}        balance:\n          - target: demo/fast\n      \
-             demo/fast:\n{CHAT}",
-            CHAT = CHAT,
-        ));
-        let registry = load(&yaml).unwrap();
-        let balance = registry
-            .models
-            .get("demo/plain")
-            .unwrap()
-            .balance()
-            .unwrap();
-        assert_eq!(balance[0].weight(), 1);
-    }
-
-    /// A balance target that is not a registered model is a load failure.
-    #[test]
-    fn a_balance_target_not_in_the_roster_is_rejected() {
-        let yaml = with(&format!(
-            "      demo/plain:\n{CHAT}        balance:\n          \
-             - {{target: demo/nonexistent, weight: 1}}\n",
-            CHAT = CHAT,
-        ));
-        let err = load(&yaml).unwrap_err();
-        assert!(err.contains("not a registered model"), "{err}");
-    }
-
-    /// Weight 0 is rejected.
-    #[test]
-    fn a_balance_weight_of_zero_is_rejected() {
-        let yaml = with(&format!(
-            "      demo/plain:\n{CHAT}        balance:\n          \
-             - {{target: demo/fast, weight: 0}}\n      demo/fast:\n{CHAT}",
-            CHAT = CHAT,
-        ));
-        let err = load(&yaml).unwrap_err();
-        assert!(err.contains("weight 0"), "{err}");
-        assert!(err.contains("must be positive"), "{err}");
-    }
-
-    /// A model with no balance field has None.
-    #[test]
-    fn a_model_without_balance_has_none() {
-        let registry = load(&with(&model("demo/plain"))).unwrap();
-        assert!(
-            registry
-                .models
-                .get("demo/plain")
-                .unwrap()
-                .balance()
-                .is_none()
-        );
     }
 }

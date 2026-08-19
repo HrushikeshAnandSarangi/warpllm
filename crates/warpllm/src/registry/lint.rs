@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::load::load;
-use super::types::{BalanceCandidate, ModelSpec, ProviderSpec, Registry};
+use super::types::{ModelSpec, ProviderSpec, Registry};
 
 /// Every policy below, first failure reported.
 pub(super) fn check(yaml: &str) -> Result<(), String> {
@@ -39,9 +39,6 @@ pub(super) fn check(yaml: &str) -> Result<(), String> {
             ));
         }
         serves(spec).map_err(|e| format!("`{key}`: {e}"))?;
-        if let Some(balance) = spec.balance() {
-            balanced(key, balance, &registry)?;
-        }
     }
     env_api_keys(&registry)
 }
@@ -216,32 +213,6 @@ fn env_api_keys(registry: &Registry) -> Result<(), String> {
             return Err(format!(
                 "`{env_api_key}` is claimed by both `{other}` and `{name}`; \
                  every provider needs its own environment variable"
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Balance candidate hygiene: no self-references, no duplicates, all targets
-/// exist.
-fn balanced(key: &str, balance: &[BalanceCandidate], registry: &Registry) -> Result<(), String> {
-    let mut seen = HashSet::new();
-    for candidate in balance {
-        if !seen.insert(&candidate.target) {
-            return Err(format!(
-                "`{key}`: balance candidate `{}` is listed twice",
-                candidate.target
-            ));
-        }
-        if candidate.target == key {
-            return Err(format!(
-                "`{key}`: balance candidate references itself; this is a no-op"
-            ));
-        }
-        if !registry.models.contains_key(&candidate.target) {
-            return Err(format!(
-                "`{key}`: balance target `{}` is not a registered model",
-                candidate.target
             ));
         }
     }
@@ -485,57 +456,5 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("model is empty"), "{err}");
         assert!(err.contains("omit the field"), "{err}");
-    }
-
-    /// A self-referencing balance target is a no-op: the balancer would
-    /// select the same model it started with.
-    #[test]
-    fn a_self_referencing_balance_target_is_rejected() {
-        let yaml = with(&format!(
-            "      demo/plain:\n{CHAT}        balance:\n          \
-             - {{target: demo/plain, weight: 1}}\n",
-            CHAT = CHAT,
-        ));
-        assert!(load(&yaml).is_ok(), "the roster is what is wrong");
-        let err = check(&yaml).unwrap_err();
-        assert!(err.contains("`demo/plain`"), "{err}");
-        assert!(err.contains("references itself"), "{err}");
-    }
-
-    /// A balance target that does not exist in the roster is a load-time
-    /// error, caught here as a lint for completeness.
-    #[test]
-    fn a_balance_target_not_in_the_roster_is_rejected() {
-        let yaml = with(&format!(
-            "      demo/plain:\n{CHAT}        balance:\n          \
-             - {{target: demo/nonexistent, weight: 1}}\n",
-            CHAT = CHAT,
-        ));
-        let err = check(&yaml).unwrap_err();
-        assert!(err.contains("not a registered model"), "{err}");
-    }
-
-    /// Two candidates naming the same target is one mistake: the second adds
-    /// no weight and no failover.
-    #[test]
-    fn a_duplicate_balance_candidate_is_rejected() {
-        let yaml = with(&format!(
-            "      demo/fast:\n{CHAT}      demo/plain:\n{CHAT}        balance:\n          \
-             - {{target: demo/fast, weight: 1}}\n          - {{target: demo/fast, weight: 2}}\n",
-            CHAT = CHAT,
-        ));
-        let err = check(&yaml).unwrap_err();
-        assert!(err.contains("listed twice"), "{err}");
-    }
-
-    /// A valid balanced model loads and lints cleanly.
-    #[test]
-    fn a_valid_balanced_model_is_accepted() {
-        let yaml = with(&format!(
-            "      demo/fast:\n{CHAT}      demo/plain:\n{CHAT}        balance:\n          \
-             - {{target: demo/fast, weight: 3}}\n",
-            CHAT = CHAT,
-        ));
-        clean(&yaml);
     }
 }

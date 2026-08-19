@@ -1,46 +1,47 @@
-//! Smooth weighted round-robin load balancing across providers.
-//!
-//! One [`Balancer`] per model_str that has a `balance:` field. Bounded by the
-//! number of balance candidates — a handful, from config — so no unbounded
-//! structures grow at runtime.
-//!
-//! Algorithm: Nginx-style smooth weighted round-robin. Each candidate holds a
-//! `current_weight` (atomic, starts at 0). On each selection:
-//!
-//! 1. Every candidate's `current_weight` is incremented by its effective weight.
-//! 2. The candidate with the highest `current_weight` is selected.
-//! 3. The selected candidate's `current_weight` is decremented by the total weight.
-//!
-//! This produces exact distribution over each cycle (length = total weight) with
-//! maximum smoothness — no two identical picks are more than
-//! `ceil(total / max_weight)` apart.
-//!
-//! Thread safety: each candidate's `current_weight` is an independent
-//! [`AtomicI32`]. Two threads may select the same candidate (benign — one extra
-//! request to that provider), but the distribution remains correct over the cycle.
-
+/// Smooth weighted round-robin load balancing across providers.
+///
+/// One [`Balancer`] per balanced group. Bounded by the number of candidates
+/// — a handful, from user config — so no unbounded structures grow at runtime.
+///
+/// Algorithm: Nginx-style smooth weighted round-robin. Each candidate holds a
+/// `current_weight` (atomic, starts at 0). On each selection:
+///
+/// 1. Every candidate's `current_weight` is incremented by its effective weight.
+/// 2. The candidate with the highest `current_weight` is selected.
+/// 3. The selected candidate's `current_weight` is decremented by the total weight.
+///
+/// This produces exact distribution over each cycle (length = total weight) with
+/// maximum smoothness — no two identical picks are more than
+/// `ceil(total / max_weight)` apart.
+///
+/// Thread safety: each candidate's `current_weight` is an independent
+/// [`AtomicI32`]. Two threads may select the same candidate (benign — one extra
+/// request to that provider), but the distribution remains correct over the cycle.
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::registry::{ModelSpec, ProviderSpec};
 
 /// One candidate in a balanced model's rotation.
 ///
-/// Resolved from a [`BalanceCandidate`](crate::BalanceCandidate) at client
-/// construction: the target `model_str` is looked up in the registry, and the
-/// resulting provider/model pair is stored here for the balancer to hand back
-/// on each selection.
+/// Each candidate maps a user-facing `model_str` to its resolved
+/// provider/model pair. The balancer hands back the candidate on each
+/// selection, and the caller uses the `model_str` for its 4-gate validation
+/// and the resolved pair for the actual request.
 #[derive(Debug)]
-pub(crate) struct Candidate {
-    pub(crate) provider: &'static ProviderSpec,
-    pub(crate) model: &'static ModelSpec,
-    pub(crate) weight: u32,
+pub struct Candidate {
+    pub model_str: String,
+    #[allow(dead_code)]
+    pub provider: &'static ProviderSpec,
+    #[allow(dead_code)]
+    pub model: &'static ModelSpec,
+    pub weight: u32,
 }
 
-/// Smooth weighted round-robin balancer for one model_str.
+/// Smooth weighted round-robin balancer for one balanced group.
 ///
-/// Built once at [`Client`](crate::Client) construction from the `balance:`
-/// entries in the roster. The candidate set is static and bounded by the
-/// roster, so no runtime allocation beyond the initial construction.
+/// Built once at [`BalancedClient`](crate::balanced::BalancedClient)
+/// construction. The candidate set is static and bounded, so no runtime
+/// allocation beyond the initial construction.
 ///
 /// # Distribution example
 ///
@@ -55,7 +56,7 @@ pub(crate) struct Candidate {
 ///
 /// Cycle: A, A, B, A — exactly 75%/25%, perfectly interleaved.
 #[derive(Debug)]
-pub(crate) struct Balancer {
+pub struct Balancer {
     candidates: Vec<Candidate>,
     /// Per-candidate current weight. `AtomicI32` because `current_weight`
     /// goes negative during the cycle (e.g., A=3-4=-1 after first pick).
@@ -68,9 +69,9 @@ pub(crate) struct Balancer {
 impl Balancer {
     /// Build a balancer from a resolved candidate list.
     ///
-    /// Candidates must be non-empty — validated at load time by the registry
-    /// and at construction time by the client.
-    pub(crate) fn new(candidates: Vec<Candidate>) -> Self {
+    /// Candidates must be non-empty — validated by
+    /// [`BalancedClient::new`](crate::balanced::BalancedClient::new).
+    pub fn new(candidates: Vec<Candidate>) -> Self {
         let total = candidates.iter().map(|c| c.weight as i32).sum();
         let current = candidates.iter().map(|_| AtomicI32::new(0)).collect();
         Self {
@@ -85,7 +86,7 @@ impl Balancer {
     /// Lock-free: each candidate's `current_weight` is an independent atomic.
     /// Two threads may select the same candidate (benign — one extra request
     /// to that provider), but the distribution remains correct over the cycle.
-    pub(crate) fn select(&self) -> &Candidate {
+    pub fn select(&self) -> &Candidate {
         // Step 1: increment every candidate's current_weight.
         for (i, c) in self.candidates.iter().enumerate() {
             self.current[i].fetch_add(c.weight as i32, Ordering::Relaxed);
@@ -124,9 +125,9 @@ mod tests {
             supported_apis: vec![],
             capabilities: crate::Capabilities::blank(),
             deprecation_date: None,
-            balance: None,
         }));
         Candidate {
+            model_str: format!("{name}/{name}"),
             provider,
             model,
             weight,

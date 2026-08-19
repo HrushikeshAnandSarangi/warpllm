@@ -1,6 +1,7 @@
 //! Core engine for warpllm, a warp-speed, robust AI gateway.
 
 mod auth;
+pub mod balanced;
 mod balancer;
 mod client;
 mod config;
@@ -14,6 +15,7 @@ mod registry;
 pub mod protocol;
 pub mod types;
 
+pub use balanced::BalancedClient;
 pub use client::{ChatCompletionStream, Client};
 pub use config::{ClientConfig, ProviderConfig};
 pub use error::{Error, Origin, Result};
@@ -75,9 +77,7 @@ pub use protocol::openai_compat::error::{ErrorBody, ErrorClass, OpenAiError};
 ///
 /// Read-only by construction: every field is private and there is no public
 /// constructor, so [`fetch_model`] is the way to obtain either half.
-pub use registry::{
-    BalanceCandidate, Capabilities, ModelSpec, ProviderSpec, SupportedApi, fetch_model,
-};
+pub use registry::{Capabilities, ModelSpec, ProviderSpec, SupportedApi, fetch_model};
 pub use types::Api;
 
 /// Returns the warpllm version.

@@ -120,16 +120,6 @@ pub struct ModelSpec {
     /// is the one after which routing to it breaks. `None` is the ordinary
     /// case and means nothing is scheduled, never that the model is permanent.
     pub(crate) deprecation_date: Option<String>,
-    /// Weighted round-robin candidates for load balancing. `None` means this
-    /// model is served by exactly one provider (the ordinary case). `Some`
-    /// means requests for this model_str are distributed across the listed
-    /// candidates by weight.
-    ///
-    /// Each candidate names a full `model_str` and a weight. The balancer
-    /// resolves all targets to their provider/model pairs at client
-    /// construction and validates that every target exists in the roster.
-    /// The primary model entry is implicitly one of the candidates.
-    pub(crate) balance: Option<Vec<BalanceCandidate>>,
 }
 
 impl ModelSpec {
@@ -188,16 +178,6 @@ impl ModelSpec {
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
-
-    /// Weighted round-robin candidates for load balancing, or `None` when this
-    /// model is served by exactly one provider.
-    ///
-    /// Each candidate names a full `model_str` and a relative weight. The
-    /// balancer resolves these to provider/model pairs at client construction.
-    /// The primary model entry itself is implicitly a candidate.
-    pub fn balance(&self) -> Option<&[BalanceCandidate]> {
-        self.balance.as_deref()
-    }
 }
 
 /// One entry in a model's `supported_apis`: a surface it serves, and what the
@@ -228,42 +208,6 @@ impl SupportedApi {
     /// Which surface this entry is about.
     pub fn api(&self) -> Api {
         self.api
-    }
-}
-
-/// One candidate in a balanced model's rotation, as written in `specs.yaml`.
-///
-/// A `target` is a full `model_str` (e.g., `"openai/gpt-5-nano"`), and a
-/// `weight` controls how often this candidate is selected relative to others.
-/// Equal by default, and the balancer treats absent weights as 1.
-///
-/// The primary model entry is implicitly one of the candidates — it does not
-/// have to name itself in the list, but it may. The balancer resolves all
-/// targets to their provider/model pairs at construction and validates that
-/// every target exists in the roster.
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BalanceCandidate {
-    /// The full `model_str` this candidate routes to.
-    pub(crate) target: String,
-    /// Relative weight. Higher means more frequent selection. Defaults to 1.
-    #[serde(default = "BalanceCandidate::default_weight")]
-    pub(crate) weight: u32,
-}
-
-impl BalanceCandidate {
-    fn default_weight() -> u32 {
-        1
-    }
-
-    /// The full `model_str` this candidate routes to.
-    pub fn target(&self) -> &str {
-        &self.target
-    }
-
-    /// Relative weight. Higher means more frequent selection.
-    pub fn weight(&self) -> u32 {
-        self.weight
     }
 }
 

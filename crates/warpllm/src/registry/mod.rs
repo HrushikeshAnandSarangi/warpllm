@@ -30,7 +30,7 @@ mod lint;
 mod testing;
 
 use types::Registry;
-pub use types::{BalanceCandidate, Capabilities, ModelSpec, ProviderSpec, SupportedApi};
+pub use types::{Capabilities, ModelSpec, ProviderSpec, SupportedApi};
 
 /// The shipped roster, loaded on first use.
 ///
@@ -115,15 +115,6 @@ pub(crate) fn providers() -> impl Iterator<Item = &'static ProviderSpec> {
 /// caller states a name and hears whether it worked.
 pub(crate) fn provider(name: &str) -> Option<&'static ProviderSpec> {
     REGISTRY.providers.get(name)
-}
-
-/// Every model on the roster, for building derived state at construction.
-///
-/// Used by the client to build balancers for models that have `balance:`
-/// entries. The iterator yields `(model_str, &ModelSpec)` pairs in no
-/// particular order — the caller builds its own lookup structure.
-pub(crate) fn all_models() -> impl Iterator<Item = (&'static str, &'static ModelSpec)> {
-    REGISTRY.models.iter().map(|(k, v)| (k.as_str(), v))
 }
 
 /// The model row filed under `model_str`, and the provider row it names.
