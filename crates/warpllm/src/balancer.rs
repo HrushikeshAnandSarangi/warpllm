@@ -92,15 +92,16 @@ impl Balancer {
             self.current[i].fetch_add(c.weight as i32, Ordering::Relaxed);
         }
         // Step 2: pick the candidate with the highest current_weight.
-        let mut best = i32::MIN;
-        let mut best_idx = 0;
-        for i in 0..self.candidates.len() {
-            let w = self.current[i].load(Ordering::Relaxed);
-            if w > best {
-                best = w;
-                best_idx = i;
-            }
-        }
+        // `-(i as i32)` breaks ties by preferring the lower index, matching
+        // the first-match semantics of the original loop.
+        let best_idx = self
+            .current
+            .iter()
+            .map(|w| w.load(Ordering::Relaxed))
+            .enumerate()
+            .max_by_key(|&(i, w)| (w, -(i as i32)))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
         // Step 3: decrement the winner by total weight.
         self.current[best_idx].fetch_sub(self.total, Ordering::Relaxed);
         &self.candidates[best_idx]

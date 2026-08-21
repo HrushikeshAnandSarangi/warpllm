@@ -86,6 +86,12 @@ impl<'a> BalancedClient<'a> {
         })
     }
 
+    /// Selects the next candidate and rewrites the request's model to match.
+    fn prepare(&self, request: &mut CreateChatCompletionRequest) {
+        let candidate = self.balancer.select();
+        request.model.clone_from(&candidate.model_str);
+    }
+
     /// Performs a non-streaming chat completion via the next balanced candidate.
     ///
     /// The request's `model` field is overwritten with the selected candidate's
@@ -96,8 +102,7 @@ impl<'a> BalancedClient<'a> {
         &self,
         mut request: CreateChatCompletionRequest,
     ) -> Result<CreateChatCompletionResponse> {
-        let candidate = self.balancer.select();
-        request.model.clone_from(&candidate.model_str);
+        self.prepare(&mut request);
         self.client.chat_completions(request).await
     }
 
@@ -108,8 +113,7 @@ impl<'a> BalancedClient<'a> {
         &self,
         mut request: CreateChatCompletionRequest,
     ) -> Result<ChatCompletionStream> {
-        let candidate = self.balancer.select();
-        request.model.clone_from(&candidate.model_str);
+        self.prepare(&mut request);
         self.client.chat_completions_stream(request).await
     }
 }
