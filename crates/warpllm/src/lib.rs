@@ -1,6 +1,8 @@
 //! Core engine for warpllm, a warp-speed, robust AI gateway.
 
 mod auth;
+pub mod balanced;
+mod balancer;
 mod client;
 mod config;
 mod credentials;
@@ -13,6 +15,7 @@ mod registry;
 pub mod protocol;
 pub mod types;
 
+pub use balanced::BalancedClient;
 pub use client::{ChatCompletionStream, Client};
 pub use config::{ClientConfig, ProviderConfig};
 pub use error::{Error, Origin, Result};
