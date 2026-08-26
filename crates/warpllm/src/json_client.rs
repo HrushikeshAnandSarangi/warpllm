@@ -5,6 +5,7 @@
 
 use crate::{
     ChatCompletionStream, Client, ClientConfig, CreateChatCompletionRequest, Error, Result,
+    balancer::Balancer,
 };
 
 /// A [`Client`] whose inputs and outputs are JSON strings.
@@ -14,6 +15,10 @@ use crate::{
 /// happen once in the core.
 pub struct JsonClient {
     inner: Client,
+}
+
+fn parse_request(request_json: &str) -> Result<CreateChatCompletionRequest> {
+    serde_json::from_str(request_json).map_err(|error| Error::InvalidInput(error.to_string()))
 }
 
 impl JsonClient {
@@ -26,7 +31,7 @@ impl JsonClient {
     }
 
     pub async fn chat_completions(&self, request_json: &str) -> Result<String> {
-        let request = Self::parse(request_json)?;
+        let request = parse_request(request_json)?;
         // A whole reply is the only thing this method's `String` can carry, so
         // a request for chunks is refused rather than served the wrong shape —
         // the same judgement [`Client::chat_completions`] makes, and now with
@@ -53,13 +58,9 @@ impl JsonClient {
         Ok(JsonChatStream {
             inner: self
                 .inner
-                .chat_completions_stream(Self::parse(request_json)?)
+                .chat_completions_stream(parse_request(request_json)?)
                 .await?,
         })
-    }
-
-    fn parse(request_json: &str) -> Result<CreateChatCompletionRequest> {
-        serde_json::from_str(request_json).map_err(|error| Error::InvalidInput(error.to_string()))
     }
 }
 
@@ -89,6 +90,80 @@ impl JsonChatStream {
             serde_json::to_string(&chunk).map_err(|error| Error::Internal(error.to_string()))
         }))
     }
+}
+
+/// A load-balanced [`Client`] whose inputs and outputs are JSON strings.
+///
+/// Mirrors [`JsonClient`] but wraps a [`Balancer`](crate::balancer::Balancer)
+/// that selects the next candidate on each request. The candidates JSON is a
+/// list of `{"model": "provider/model", "weight": N}` objects.
+pub struct JsonBalancedClient {
+    client: Client,
+    balancer: Balancer,
+}
+
+impl std::fmt::Debug for JsonBalancedClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsonBalancedClient")
+            .field("balancer", &self.balancer)
+            .finish()
+    }
+}
+
+impl JsonBalancedClient {
+    pub fn new(config_json: &str, candidates_json: &str) -> Result<Self> {
+        let config: ClientConfig = serde_json::from_str(config_json)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?;
+        let raw: Vec<CandidateJson> = serde_json::from_str(candidates_json)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?;
+        if raw.is_empty() {
+            return Err(Error::InvalidInput(
+                "balanced client requires at least one candidate".into(),
+            ));
+        }
+        let client = Client::new(config)?;
+        let mut candidates = Vec::with_capacity(raw.len());
+        for entry in raw {
+            // Validated here rather than stored: the selected candidate's
+            // model string is written back onto the request and the inner
+            // client resolves it again through its own gates.
+            client.fetch_model(&entry.model)?;
+            candidates.push(crate::balancer::Candidate {
+                model_str: entry.model,
+                weight: entry.weight,
+            });
+        }
+        Ok(Self {
+            client,
+            balancer: Balancer::new(candidates),
+        })
+    }
+
+    pub async fn chat_completions(&self, request_json: &str) -> Result<String> {
+        let mut request: CreateChatCompletionRequest = parse_request(request_json)?;
+        if request.stream == Some(true) {
+            return Err(Error::InvalidInput(
+                "stream: true asks for chunks; call chat_completions_stream".into(),
+            ));
+        }
+        request.model.clone_from(&self.balancer.select().model_str);
+        let response = self.client.chat_completions(request).await?;
+        serde_json::to_string(&response).map_err(|error| Error::Internal(error.to_string()))
+    }
+
+    pub async fn chat_completions_stream(&self, request_json: &str) -> Result<JsonChatStream> {
+        let mut request: CreateChatCompletionRequest = parse_request(request_json)?;
+        request.model.clone_from(&self.balancer.select().model_str);
+        Ok(JsonChatStream {
+            inner: self.client.chat_completions_stream(request).await?,
+        })
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CandidateJson {
+    model: String,
+    weight: u32,
 }
 
 #[cfg(test)]
@@ -192,5 +267,18 @@ mod tests {
             matches!(&error, Error::InvalidModel { given } if given == "openai/not-a-model"),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn json_balanced_empty_candidates_rejected() {
+        let error = JsonBalancedClient::new("{}", "[]").unwrap_err();
+        assert!(error.to_string().contains("at least one candidate"));
+    }
+
+    #[test]
+    fn json_balanced_unknown_model_rejected() {
+        let error =
+            JsonBalancedClient::new("{}", r#"[{"model":"nope/nope","weight":1}]"#).unwrap_err();
+        assert!(error.to_string().contains("no registered model"));
     }
 }
