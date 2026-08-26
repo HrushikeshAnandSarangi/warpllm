@@ -91,6 +91,7 @@ pub(crate) fn ingest_request(request: CreateMessageRequest, model: &str) -> type
         .and_then(|config| config.effort.as_deref());
     types::ChatRequest {
         model: model.to_string(),
+        models: None,
         // The system prompt becomes a LEADING message, which is the gateway's
         // arrangement — `ChatRequest::messages` documents system messages as
         // included and hoisted per target. Rendering hoists it back out.

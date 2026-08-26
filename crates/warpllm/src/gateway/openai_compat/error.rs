@@ -273,6 +273,29 @@ fn opinion(error: &Error) -> Opinion {
         // An unattributed 5xx is already the status OpenAI would send, and
         // which 5xx it is came from the provider — nothing to improve on.
         Error::ServerError(_) => (Upstream, Some("server_error"), None),
+        // All candidates in a failover list failed. 503 because no single
+        // provider produced this — it is a service-unavailable at the
+        // gateway level. The last attempt's status and message are more
+        // actionable in the body; see `to_openai` which renders them.
+        //
+        // open: the issue weighs last attempt's real status vs synthetic 502.
+        // Leaning toward the former (last attempt's status with earlier
+        // attempts named in the message), which is what the fallback to
+        // `Upstream` here achieves.
+        Error::CandidatesExhausted { tried, .. } => {
+            let last_status = tried
+                .last()
+                .and_then(|(_, e)| e.provider_error())
+                .map(|e| e.status);
+            match last_status {
+                Some(status) => (
+                    Is(status),
+                    Some("server_error"),
+                    Some("candidates_exhausted"),
+                ),
+                None => (Is(503), Some("server_error"), Some("candidates_exhausted")),
+            }
+        }
         // Nothing classified it. Everything the upstream said stands.
         _ => (Upstream, None, None),
     };

@@ -93,6 +93,9 @@ impl<'a> BalancedClient<'a> {
     fn prepare(&self, request: CreateChatCompletionRequest) -> CreateChatCompletionRequest {
         let mut request = request;
         request.model.clone_from(&self.balancer.select().model_str);
+        // BalancedClient picks one candidate via weighted selection; a
+        // caller-supplied `models` list would conflict with that choice.
+        request.models = None;
         request
     }
 

@@ -629,7 +629,18 @@ pub struct ToolCallChunkFunction {
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS, schemars::JsonSchema))]
 pub struct CreateChatCompletionRequest {
     /// Model string in `provider/model` form, e.g. `"openai/gpt-5.6"`.
+    /// `#[serde(default)]` so a body sending only `models` (no `model`)
+    /// deserializes; the field stays `String` and the generated
+    /// TypeScript/Python types widen from required to optional.
+    #[serde(default)]
     pub model: String,
+    /// warpllm extension: ordered candidate models for per-request
+    /// failover. When present, the client tries each model in order on
+    /// retryable errors; the first successful one serves the request.
+    /// Consumed at ingest time; not forwarded upstream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "codegen", ts(optional = nullable))]
+    pub models: Option<Vec<String>>,
     pub messages: Vec<ChatCompletionRequestMessage>,
     #[serde(
         default,

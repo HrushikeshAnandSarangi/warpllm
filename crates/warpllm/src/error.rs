@@ -190,6 +190,24 @@ pub enum Error {
     /// Carries no claim either way — read the [`ProviderError`] and decide.
     #[error("{0}")]
     Unknown(Box<ProviderError>),
+
+    // ----------------------------------------- failover exhaustion
+    /// Every candidate in a per-request failover list has been tried and
+    /// failed. Carries every attempt in order — candidate string and the
+    /// failure it produced — because an exhausted-candidates error that
+    /// flattens distinct failures into one opaque message throws away the
+    /// only useful diagnostic.
+    #[error(
+        "all candidates exhausted for \"{requested_model}\" \
+         ({} attempted)",
+        tried.len()
+    )]
+    CandidatesExhausted {
+        /// The caller's original `model` string, for the error message.
+        requested_model: String,
+        /// Each candidate attempted, in order, with the error it produced.
+        tried: Vec<(String, Box<Error>)>,
+    },
 }
 
 /// Who a failure came from.
@@ -259,7 +277,8 @@ impl Error {
             | Error::StreamStalled { .. }
             | Error::NotImplemented(_)
             | Error::Internal(_)
-            | Error::InvalidRoster(_) => Origin::Gateway,
+            | Error::InvalidRoster(_)
+            | Error::CandidatesExhausted { .. } => Origin::Gateway,
             Error::RateLimited(_)
             | Error::QuotaExceeded(_)
             | Error::Overloaded(_)
@@ -292,6 +311,9 @@ impl Error {
             | Error::ModelNotFound(e)
             | Error::InvalidRequest(e)
             | Error::Unknown(e) => Some(e),
+            Error::CandidatesExhausted { tried, .. } => {
+                tried.last().and_then(|(_, e)| e.provider_error())
+            }
             _ => None,
         }
     }
@@ -328,6 +350,7 @@ impl Error {
             Error::ModelNotFound(_) => "model_not_found",
             Error::InvalidRequest(_) => "provider_invalid_request",
             Error::Unknown(_) => "provider_unknown",
+            Error::CandidatesExhausted { .. } => "candidates_exhausted",
         }
     }
 

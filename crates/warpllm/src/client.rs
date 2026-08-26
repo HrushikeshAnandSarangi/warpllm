@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::auth::Authenticator;
 use crate::config::{ClientConfig, DEFAULT_TIMEOUT_SECS};
@@ -201,43 +201,97 @@ impl Client {
         request: CreateChatCompletionRequest,
     ) -> Result<CreateChatCompletionResponse> {
         if request.stream == Some(true) {
-            // Not "unimplemented": it IS implemented, on a method whose return
-            // type can carry chunks. A whole reply cannot, so this entrypoint
-            // says where to go rather than quietly serving the wrong shape.
             return Err(Error::InvalidInput(
                 "stream: true asks for chunks; call chat_completions_stream".into(),
             ));
         }
         let requested_model = request.model.clone();
-        let ModelDefinition {
-            provider,
-            model,
-            auth,
-        } = self.validate(&requested_model, Api::OpenAiCompatChatCompletions)?;
+        let candidates = build_candidates(&request)?;
 
-        // Ingest answers to the protocol warpllm was CALLED with, which is
-        // openai_compat and only ever will be for this entrypoint. The ENTRY's
-        // model name goes in, not the caller's string: they differ whenever
-        // warpllm's routing alias differs from the provider's own name.
-        let normalized =
-            openai_compat::api::chat_completions::ingest_request(request, model.model());
-        // No dispatch to do: the surface above names its own protocol, so
-        // asking for `openai_compat_chat_completions` IS the choice of module.
-        // A second protocol arrives as a second entrypoint, not as an arm here
-        // — this one takes an OpenAI-shaped request by signature.
-        let response = openai_compat::api::chat_completions::exchange(
-            &normalized,
-            &self.http,
-            provider.name(),
-            self.base_url(provider),
-            auth,
-        )
-        .await?;
-        let mut completion =
-            openai_compat::api::chat_completions::render_response(&response, provider.name());
-        // Echo the caller's provider-prefixed string, not the upstream echo.
-        completion.model = requested_model;
-        Ok(completion)
+        // Validate ALL candidates before any exchange. An unroutable
+        // candidate fails the whole request — it is not skipped. Each of
+        // those four failures is a caller mistake, not a transient upstream
+        // condition, and a typo in candidate 3 believes they have three-way
+        // redundancy and has two — that is worth a refusal at admission,
+        // where the message can name the candidate and the gate it failed.
+        let validated: Vec<(String, ModelDefinition<'_>)> = candidates
+            .iter()
+            .map(|c| {
+                self.validate(c, Api::OpenAiCompatChatCompletions)
+                    .map(|def| (c.clone(), def))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut failover = Failover::new(
+            validated.iter().map(|(c, _)| c.clone()).collect(),
+            self.config.timeout_secs,
+            request.models.is_some(),
+        );
+
+        let result = tokio::time::timeout(failover.remaining(), async {
+            loop {
+                let (candidate, def) = match failover.next() {
+                    Some(c) => {
+                        // We validated above, so look up the pre-validated def.
+                        let def = validated
+                            .iter()
+                            .find(|(name, _)| name == c)
+                            .map(|(_, def)| def)
+                            .expect("validated list matches failover candidates");
+                        (c.to_string(), def)
+                    }
+                    None => break Err(failover.into_exhausted(&requested_model)),
+                };
+
+                let normalized = openai_compat::api::chat_completions::ingest_request(
+                    request.clone(),
+                    def.model.model(),
+                );
+
+                match openai_compat::api::chat_completions::exchange(
+                    &normalized,
+                    &self.http,
+                    def.provider.name(),
+                    self.base_url(def.provider),
+                    def.auth,
+                )
+                .await
+                {
+                    Ok(response) => {
+                        let mut completion = openai_compat::api::chat_completions::render_response(
+                            &response,
+                            def.provider.name(),
+                        );
+                        // Echo the candidate that served, not the caller's
+                        // original model string.
+                        completion.model = candidate;
+                        tracing::info!(
+                            candidate = %completion.model,
+                            "failover candidate serving"
+                        );
+                        break Ok(completion);
+                    }
+                    Err(e) => {
+                        if is_retryable(&e) {
+                            tracing::warn!(
+                                candidate = %candidate,
+                                error = %e,
+                                "failover candidate failed, trying next"
+                            );
+                            failover.record_failure(candidate, e);
+                            continue;
+                        }
+                        break Err(e);
+                    }
+                }
+            }
+        })
+        .await;
+
+        match result {
+            Ok(r) => r,
+            Err(_elapsed) => Err(Error::InvalidInput("failover deadline exceeded".into())),
+        }
     }
 
     /// Serves one OpenAI-compatible chat completion as a stream of chunks.
@@ -258,29 +312,86 @@ impl Client {
     ) -> Result<ChatCompletionStream> {
         request.stream = Some(true);
         let requested_model = request.model.clone();
-        let ModelDefinition {
-            provider,
-            model,
-            auth,
-        } = self.validate(&requested_model, Api::OpenAiCompatChatCompletionsStream)?;
+        let candidates = build_candidates(&request)?;
 
-        let normalized =
-            openai_compat::api::chat_completions::ingest_request(request, model.model());
-        Ok(ChatCompletionStream {
-            chunks: openai_compat::api::chat_completions::exchange_stream(
-                &normalized,
-                &self.http,
-                provider.name(),
-                self.base_url(provider),
-                auth,
-                self.config
-                    .stream_read_timeout_secs
-                    .map(Duration::from_secs),
-            )
-            .await?,
-            provider: provider.name(),
-            model: requested_model,
+        // Validate ALL candidates upfront, same as chat_completions.
+        let validated: Vec<(String, ModelDefinition<'_>)> = candidates
+            .iter()
+            .map(|c| {
+                self.validate(c, Api::OpenAiCompatChatCompletionsStream)
+                    .map(|def| (c.clone(), def))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut failover = Failover::new(
+            validated.iter().map(|(c, _)| c.clone()).collect(),
+            self.config.timeout_secs,
+            request.models.is_some(),
+        );
+
+        let result = tokio::time::timeout(failover.remaining(), async {
+            loop {
+                let (candidate, def) = match failover.next() {
+                    Some(c) => {
+                        let def = validated
+                            .iter()
+                            .find(|(name, _)| name == c)
+                            .map(|(_, def)| def)
+                            .expect("validated list matches failover candidates");
+                        (c.to_string(), def)
+                    }
+                    None => break Err(failover.into_exhausted(&requested_model)),
+                };
+
+                let normalized = openai_compat::api::chat_completions::ingest_request(
+                    request.clone(),
+                    def.model.model(),
+                );
+
+                match openai_compat::api::chat_completions::exchange_stream(
+                    &normalized,
+                    &self.http,
+                    def.provider.name(),
+                    self.base_url(def.provider),
+                    def.auth,
+                    self.config
+                        .stream_read_timeout_secs
+                        .map(Duration::from_secs),
+                )
+                .await
+                {
+                    Ok(chunks) => {
+                        tracing::info!(
+                            candidate = %candidate,
+                            "failover candidate serving (stream)"
+                        );
+                        break Ok(ChatCompletionStream {
+                            chunks,
+                            provider: def.provider.name(),
+                            model: candidate,
+                        });
+                    }
+                    Err(e) => {
+                        if is_retryable(&e) {
+                            tracing::warn!(
+                                candidate = %candidate,
+                                error = %e,
+                                "failover stream candidate failed, trying next"
+                            );
+                            failover.record_failure(candidate, e);
+                            continue;
+                        }
+                        break Err(e);
+                    }
+                }
+            }
         })
+        .await;
+
+        match result {
+            Ok(r) => r,
+            Err(_elapsed) => Err(Error::InvalidInput("failover deadline exceeded".into())),
+        }
     }
 
     /// The whole validation sequence, in the one order that keeps each refusal
@@ -419,6 +530,111 @@ impl Client {
             .base_url
             .as_deref()
             .unwrap_or(provider.base_url())
+    }
+}
+
+/// Whether this error is transient enough to try the next candidate.
+///
+/// Retryable: the upstream is temporarily unreachable or shedding load, or
+/// the model was not found (the caller's list may name different models at
+/// different hosts, so a 404 on one says nothing about the next).
+///
+/// Fatal: auth, permissions, request shape, context length, content filter,
+/// quota, and anything warpllm itself decided. These are caller mistakes or
+/// billing issues that the next candidate will reproduce.
+fn is_retryable(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::RateLimited(_)
+            | Error::Overloaded(_)
+            | Error::ServerError(_)
+            | Error::Network { .. }
+            | Error::Decode { .. }
+            | Error::ModelNotFound(_)
+    )
+}
+
+/// Build the candidate list from a request's `model` / `models` fields.
+///
+/// Exactly one must be non-empty. Both or neither is
+/// [`Error::InvalidInput`].
+fn build_candidates(request: &CreateChatCompletionRequest) -> Result<Vec<String>> {
+    let has_model = !request.model.is_empty();
+    let has_models = request.models.as_ref().is_some_and(|m| !m.is_empty());
+
+    match (has_model, has_models) {
+        (true, true) => Err(Error::InvalidInput(
+            "both model and models are set; use exactly one".into(),
+        )),
+        (false, false) => Err(Error::InvalidInput(
+            "either model or models is required".into(),
+        )),
+        (true, false) => Ok(vec![request.model.clone()]),
+        (false, true) => Ok(request.models.clone().unwrap()),
+    }
+}
+
+/// Manages the candidate list, failover loop, deadline enforcement, and
+/// error collection for a per-request failover chain.
+///
+/// Shared between [`Client::chat_completions`] and
+/// [`Client::chat_completions_stream`].
+struct Failover {
+    candidates: Vec<String>,
+    deadline: Instant,
+    idx: usize,
+    tried: Vec<(String, Box<Error>)>,
+    /// Whether the caller explicitly passed `models`. When false, the
+    /// request used the single `model` field and we preserve backward-
+    /// compatible error semantics: a retryable failure returns the inner
+    /// error directly instead of wrapping it in `CandidatesExhausted`.
+    requested_models: bool,
+}
+
+impl Failover {
+    fn new(candidates: Vec<String>, timeout_secs: Option<u64>, requested_models: bool) -> Self {
+        Self {
+            deadline: Instant::now()
+                + Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS)),
+            candidates,
+            idx: 0,
+            tried: Vec::new(),
+            requested_models,
+        }
+    }
+
+    /// The next candidate, or `None` when the list is exhausted.
+    fn next(&mut self) -> Option<&str> {
+        let candidate = self.candidates.get(self.idx)?;
+        Some(candidate.as_str())
+    }
+
+    /// Time remaining until the overall deadline, or `Duration::ZERO` if
+    /// the deadline has already passed.
+    fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+
+    /// Record a failed attempt and advance to the next candidate.
+    fn record_failure(&mut self, candidate: String, error: Error) {
+        self.tried.push((candidate, Box::new(error)));
+        self.idx += 1;
+    }
+
+    /// Convert accumulated state into [`Error::CandidatesExhausted`].
+    ///
+    /// When the request used the single `model` field (not `models`), a
+    /// single failure returns the inner error directly for backward
+    /// compatibility — callers were never expected to match
+    /// `CandidatesExhausted` on a single-model request.
+    fn into_exhausted(self, requested_model: &str) -> Error {
+        if !self.requested_models && self.tried.len() == 1 {
+            return *self.tried.into_iter().next().unwrap().1;
+        }
+        Error::CandidatesExhausted {
+            requested_model: requested_model.to_string(),
+            tried: self.tried,
+        }
     }
 }
 

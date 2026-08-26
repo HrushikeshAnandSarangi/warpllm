@@ -159,8 +159,18 @@ export type CompletionUsage = { completion_tokens: number, prompt_tokens: number
 export type CreateChatCompletionRequest = {
 /**
  * Model string in `provider/model` form, e.g. `"openai/gpt-5.6"`.
+ * `#[serde(default)]` so a body sending only `models` (no `model`)
+ * deserializes; the field stays `String` and the generated
+ * TypeScript/Python types widen from required to optional.
  */
-model: string, messages: Array<ChatCompletionRequestMessage>, temperature?: number | null, max_tokens?: number | null, top_p?: number | null, stop?: ChatCompletionStop | null, stream?: boolean | null, stream_options?: ChatCompletionStreamOptions | null,
+model: string,
+/**
+ * warpllm extension: ordered candidate models for per-request
+ * failover. When present, the client tries each model in order on
+ * retryable errors; the first successful one serves the request.
+ * Consumed at ingest time; not forwarded upstream.
+ */
+models?: Array<string> | null, messages: Array<ChatCompletionRequestMessage>, temperature?: number | null, max_tokens?: number | null, top_p?: number | null, stop?: ChatCompletionStop | null, stream?: boolean | null, stream_options?: ChatCompletionStreamOptions | null,
 /**
  * Tools the model may call.
  */
