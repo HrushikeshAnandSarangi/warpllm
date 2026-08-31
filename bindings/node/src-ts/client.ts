@@ -101,6 +101,9 @@ function serializeConfig(options: WarpLLMOptions): string {
   })
 }
 
+// Runtime dispatch is on the VALUE, so behaviour is right even where the
+// overload above cannot resolve — a request built as a variable, or handed
+// through a helper that widened `stream` to `boolean`.
 async function chatCompletionsImpl<T extends CreateChatCompletionRequest>(
   native: NativeChatClient,
   request: T,
@@ -111,14 +114,18 @@ async function chatCompletionsImpl<T extends CreateChatCompletionRequest>(
         await native.chatCompletionsStream(JSON.stringify(request)),
       )
     } catch (err) {
-      throwFromWire(err)
+      throw throwFromWire(err)
     }
   }
   let raw: string
   try {
     raw = await native.chatCompletions(JSON.stringify(request))
   } catch (err) {
-    throwFromWire(err)
+    // `throw` here, not a bare call: `throwFromWire` is declared `never`, so
+    // `raw` below is sound only as long as it never returns. `throw`ing its
+    // result keeps that true even if the signature ever loosens to `void`,
+    // at zero cost today.
+    throw throwFromWire(err)
   }
   return JSON.parse(raw) as CreateChatCompletionResponse
 }
@@ -240,6 +247,16 @@ export class WarpLLMBalanced {
   private readonly native: NativeBalancedClient
 
   constructor(candidates: BalancedCandidate[], options: WarpLLMOptions = {}) {
+    // TypeScript's checker only helps a caller who is one; the object
+    // crossing to Rust below is plain JS at runtime, so a caller assembling
+    // it dynamically (or calling from plain JS at all) gets a message
+    // naming what they actually did wrong, not a Rust-side JSON-offset error
+    // about a document they never saw.
+    candidates.forEach((candidate, i) => {
+      if (candidate.model === undefined || candidate.weight === undefined) {
+        throw new TypeError(`candidates[${i}] needs both 'model' and 'weight': ${JSON.stringify(candidate)}`)
+      }
+    })
     try {
       this.native = new NativeBalancedClient(
         serializeConfig(options),

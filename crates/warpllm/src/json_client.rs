@@ -5,7 +5,7 @@
 
 use crate::{
     ChatCompletionStream, Client, ClientConfig, CreateChatCompletionRequest, Error, Result,
-    balancer::Balancer,
+    balanced::prepare_balanced, balancer::Balancer,
 };
 
 /// A [`Client`] whose inputs and outputs are JSON strings.
@@ -135,25 +135,35 @@ impl JsonBalancedClient {
         }
         Ok(Self {
             client,
-            balancer: Balancer::new(candidates),
+            // Weight validation lives in `Balancer::new`, the one place both
+            // this JSON boundary and Rust's `BalancedClient` build a
+            // `Balancer` — see its doc comment. A caller-supplied `weight`
+            // reaches here as a plain `u32` straight off the wire, with none
+            // of the guarantees a Rust literal has.
+            balancer: Balancer::new(candidates)?,
         })
     }
 
+    // Selection happens through the shared `prepare_balanced`, not a local
+    // `request.model.clone_from(...)`, and — as important — happens BEFORE
+    // any request-shape check, matching `BalancedClient::chat_completions`
+    // (`balanced.rs`), which selects in `prepare` and only then hands the
+    // request to `Client::chat_completions` for its own gates including the
+    // `stream: true` one. A local pre-check here that ran before selection
+    // used to reject a streaming call without consuming a rotation slot,
+    // while the Rust path always consumes one — the same rejected request
+    // would leave the two bindings' rotations out of phase with each other.
+
     pub async fn chat_completions(&self, request_json: &str) -> Result<String> {
-        let mut request: CreateChatCompletionRequest = parse_request(request_json)?;
-        if request.stream == Some(true) {
-            return Err(Error::InvalidInput(
-                "stream: true asks for chunks; call chat_completions_stream".into(),
-            ));
-        }
-        request.model.clone_from(&self.balancer.select().model_str);
+        let request: CreateChatCompletionRequest = parse_request(request_json)?;
+        let request = prepare_balanced(&self.balancer, request);
         let response = self.client.chat_completions(request).await?;
         serde_json::to_string(&response).map_err(|error| Error::Internal(error.to_string()))
     }
 
     pub async fn chat_completions_stream(&self, request_json: &str) -> Result<JsonChatStream> {
-        let mut request: CreateChatCompletionRequest = parse_request(request_json)?;
-        request.model.clone_from(&self.balancer.select().model_str);
+        let request: CreateChatCompletionRequest = parse_request(request_json)?;
+        let request = prepare_balanced(&self.balancer, request);
         Ok(JsonChatStream {
             inner: self.client.chat_completions_stream(request).await?,
         })
@@ -280,5 +290,62 @@ mod tests {
         let error =
             JsonBalancedClient::new("{}", r#"[{"model":"nope/nope","weight":1}]"#).unwrap_err();
         assert!(error.to_string().contains("no registered model"));
+    }
+
+    /// `weight` arrives from caller JSON as a plain, unvalidated `u32` — this
+    /// is the surface a Rust caller of `BalancedClient::new` never has,
+    /// since `&[(&str, u32)]` literals don't hand it 0 across every
+    /// candidate. Constructor-time, so it needs no network.
+    #[test]
+    fn json_balanced_all_zero_weight_rejected() {
+        let error = JsonBalancedClient::new("{}", r#"[{"model":"openai/gpt-5.6","weight":0}]"#)
+            .unwrap_err();
+        assert!(error.to_string().contains("weight 0"), "{error}");
+    }
+
+    /// `4294967295` (`u32::MAX`) is an ordinary JSON integer a Python or
+    /// Node caller can send with no casting. `u32::MAX as i32` is `-1`, so
+    /// unvalidated this would invert the balancer's rotation instead of
+    /// being refused.
+    #[test]
+    fn json_balanced_weight_exceeding_i32_max_rejected() {
+        let error =
+            JsonBalancedClient::new("{}", r#"[{"model":"openai/gpt-5.6","weight":4294967295}]"#)
+                .unwrap_err();
+        assert!(error.to_string().contains("exceeds the maximum"), "{error}");
+    }
+
+    /// A candidate missing `weight` is a shape error the caller should see
+    /// as `InvalidInput`, same as any other malformed request body on this
+    /// boundary — not a panic or an unrelated error variant.
+    #[test]
+    fn json_balanced_candidate_missing_weight_is_invalid_input() {
+        let error = JsonBalancedClient::new("{}", r#"[{"model":"openai/gpt-5.6"}]"#).unwrap_err();
+        assert!(matches!(error, Error::InvalidInput(_)), "{error:?}");
+    }
+
+    /// `stream: true` must be refused in the same order Rust's
+    /// `BalancedClient` refuses it: select a candidate first (consuming a
+    /// rotation slot), then let the inner `Client` reject the request shape.
+    /// A refusal that ran before selection would leave this binding's
+    /// rotation out of phase with Rust's for the identical caller mistake —
+    /// see the comment above `JsonBalancedClient::chat_completions`. Needs
+    /// no network: `Client::chat_completions` rejects `stream: true` before
+    /// any request reaches the roster or an upstream.
+    #[tokio::test]
+    async fn json_balanced_stream_true_is_refused_after_selecting() {
+        let client =
+            JsonBalancedClient::new("{}", r#"[{"model":"openai/gpt-5.6","weight":1}]"#).unwrap();
+        let error = client
+            .chat_completions(r#"{"model":"ignored","messages":[],"stream":true}"#)
+            .await
+            .expect_err("a whole reply cannot carry chunks");
+        match &error {
+            Error::InvalidInput(message) => assert!(
+                message.contains("chat_completions_stream"),
+                "the refusal must name where to go instead: {message}"
+            ),
+            other => panic!("{other:?}"),
+        }
     }
 }

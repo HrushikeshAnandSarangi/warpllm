@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from typing import (
     TYPE_CHECKING,
-    Any,
     AsyncIterator,
     Iterator,
     Literal,
@@ -93,6 +92,9 @@ def _native_balanced_client(
     providers: Mapping[str, ProviderOptions] | None,
     candidates: list[BalancedCandidate],
 ) -> _NativeBalancedClient:
+    for i, candidate in enumerate(candidates):
+        if "model" not in candidate or "weight" not in candidate:
+            raise TypeError(f"candidates[{i}] needs both 'model' and 'weight': {candidate!r}")
     try:
         return _NativeBalancedClient(
             _build_config(base_url, specs_path, timeout, stream_read_timeout, providers),
@@ -102,30 +104,31 @@ def _native_balanced_client(
         raise_from_wire(str(e))
 
 
-def _sync_chat_completions(native: Any, request_json: str) -> str:
-    assert hasattr(native, "chat_completions"), (
-        f"expected _NativeClient or _NativeBalancedClient, got {type(native).__name__}"
-    )
+# Either native client type exposes the same four methods -- this is the
+# structural interface the four helpers below actually need, in place of
+# `Any` and a runtime `assert hasattr` that `python -O` strips and that
+# nothing but these two types could ever fail anyway. Mirrors the Node side's
+# `NativeChatClient` (`client.ts`), which took this approach from the start.
+_NativeChatClient = _NativeClient | _NativeBalancedClient
+
+
+def _sync_chat_completions(native: _NativeChatClient, request_json: str) -> str:
     try:
         return native.chat_completions(request_json)
     except WarpLLMNativeError as e:
         raise_from_wire(str(e))
 
 
-async def _async_chat_completions(native: Any, request_json: str) -> str:
-    assert hasattr(native, "async_chat_completions"), (
-        f"expected _NativeClient or _NativeBalancedClient, got {type(native).__name__}"
-    )
+async def _async_chat_completions(native: _NativeChatClient, request_json: str) -> str:
     try:
         return await native.async_chat_completions(request_json)
     except WarpLLMNativeError as e:
         raise_from_wire(str(e))
 
 
-def _sync_chat_completions_stream(native: Any, request_json: str) -> _NativeChatStream:
-    assert hasattr(native, "chat_completions_stream"), (
-        f"expected _NativeClient or _NativeBalancedClient, got {type(native).__name__}"
-    )
+def _sync_chat_completions_stream(
+    native: _NativeChatClient, request_json: str
+) -> _NativeChatStream:
     try:
         return native.chat_completions_stream(request_json)
     except WarpLLMNativeError as e:
@@ -133,11 +136,8 @@ def _sync_chat_completions_stream(native: Any, request_json: str) -> _NativeChat
 
 
 async def _async_chat_completions_stream(
-    native: Any, request_json: str
+    native: _NativeChatClient, request_json: str
 ) -> _NativeChatStream:
-    assert hasattr(native, "async_chat_completions_stream"), (
-        f"expected _NativeClient or _NativeBalancedClient, got {type(native).__name__}"
-    )
     try:
         return await native.async_chat_completions_stream(request_json)
     except WarpLLMNativeError as e:
@@ -290,29 +290,32 @@ class WarpLLM:
         self, request: Mapping[str, object]
     ) -> CreateChatCompletionResponse | ChatCompletionStream:
         """One method, mirroring Rust's `client.chat_completions(request)`.
+
         The request crosses verbatim -- its fields are Rust's, so nothing
         here renames them and nothing here has to learn a field warpllm
-        gains.  The response comes back as Rust serialized it: Rust has
+        gains. The response comes back as Rust serialized it: Rust has
         already parsed and validated it, and re-hydrating it into Python
         objects would re-do that work to hand back the same fields under the
         same names.
 
         `warpllm.types.CreateChatCompletionRequest` is available when callers
-        want strict authoring help.  This boundary accepts any mapping because
+        want strict authoring help. This boundary accepts any mapping because
         Rust deliberately forwards fields it does not model.
 
         `stream=True` returns a `ChatCompletionStream` to iterate, matching the
         official OpenAI SDK's one-method shape.
 
         The RUNTIME behaviour of that is exact; the static typing is
-        best-effort, and the reason is this signature.  The OpenAI SDK overloads
+        best-effort, and the reason is this signature. The OpenAI SDK overloads
         on a `stream` KEYWORD argument, which a checker reads as a literal.
         warpllm takes one mapping so that unmodeled fields cross untouched, so
         the overload has to match the mapping's type instead -- and a dict
-        literal carrying extra keys matches no TypedDict.  A checker will infer
+        literal carrying extra keys matches no TypedDict. A checker will infer
         `CreateChatCompletionResponse` for those; use `chat_completions_stream`
         where the annotation has to be right.
         """
+        # Dispatch on the VALUE, so behaviour is correct wherever the overload
+        # above cannot resolve.
         if request.get("stream") is True:
             return self.chat_completions_stream(request)
         raw = _sync_chat_completions(self._native, json.dumps(dict(request)))
@@ -324,7 +327,7 @@ class WarpLLM:
         """Streaming, precisely typed.
 
         The same thing `chat_completions({..., "stream": True})` does, for
-        callers who need a checker to agree with it.  `stream` is set here, so
+        callers who need a checker to agree with it. `stream` is set here, so
         the request need not say so.
         """
         native = _sync_chat_completions_stream(
