@@ -10,12 +10,6 @@ pub(crate) struct ChatRequest {
     /// Upstream model name, provider prefix already stripped.
     pub model: String,
 
-    /// Candidate list for per-request failover. Consumed by the failover
-    /// loop in [`Client`](crate::Client), not forwarded to providers.
-    /// First element is primary.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub models: Option<Vec<String>>,
-
     /// Full conversation, system messages included (hoisted per target).
     pub messages: Vec<Message>,
 
