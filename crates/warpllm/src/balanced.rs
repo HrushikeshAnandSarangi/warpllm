@@ -243,7 +243,7 @@ mod tests {
         }])
         .unwrap();
         let request = CreateChatCompletionRequest {
-            models: Some(vec!["a/test".into(), "b/test".into()].into()),
+            models: Some(vec!["a/test".into(), "b/test".into()]),
             ..Default::default()
         };
         let err = prepare_balanced(&balancer, request).unwrap_err();

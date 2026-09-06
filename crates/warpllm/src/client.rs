@@ -7,12 +7,14 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::auth::Authenticator;
+use crate::balancer;
 use crate::config::{ClientConfig, DEFAULT_TIMEOUT_SECS};
 use crate::credentials::Credentials;
 use crate::error::{Error, Result};
 use crate::gateway::{anthropic, openai_compat};
 use crate::protocol::openai_compat::chat_completions::types::{
     CreateChatCompletionRequest, CreateChatCompletionResponse, CreateChatCompletionStreamResponse,
+    ModelCandidate,
 };
 use crate::registry::{self, ModelSpec, ProviderSpec, Registry};
 use crate::types::{Api, Protocol};
@@ -909,7 +911,7 @@ fn build_candidates(request: &CreateChatCompletionRequest) -> Result<Candidates>
             ));
         }
         (true, false) => vec![request.model.clone()],
-        (false, true) => models.unwrap().to_vec(),
+        (false, true) => resolve_models(models.unwrap())?,
     };
 
     let mut deduped: Vec<String> = Vec::with_capacity(list.len());
@@ -927,6 +929,86 @@ fn build_candidates(request: &CreateChatCompletionRequest) -> Result<Candidates>
         list: deduped,
         requested_models: has_models,
     })
+}
+
+/// Maximum number of raw `models` entries a weighted/tiered request may
+/// name, checked BEFORE grouping into tiers.
+///
+/// [`MAX_FAILOVER_CANDIDATES`] bounds the RESOLVED chain — one candidate per
+/// tier — which does nothing to stop a single tier from naming thousands of
+/// weighted members: that resolves to one chain entry no matter how many
+/// entries fed it, so the existing post-resolution cap would never see them.
+/// Checked on the plain (bare-string-only) list instead happens AFTER
+/// dedup, by design — see [`build_candidates`] — so this is a second,
+/// earlier gate specific to the weighted path, not a tightening of the
+/// first.
+const MAX_WEIGHTED_MODEL_ENTRIES: usize = MAX_FAILOVER_CANDIDATES * 4;
+
+/// Resolves a `models` list to the ordered candidate-string chain
+/// [`Failover`] consumes — the one thing [`build_candidates`] needs from
+/// either shape a caller wrote.
+///
+/// Two independent modes, picked by what the caller actually wrote rather
+/// than a flag:
+///
+/// * Every entry a bare string: today's plain failover list, UNCHANGED —
+///   each string in the order given, no weighting, no tiers.
+/// * At least one entry an object: entries group by `failover` (default
+///   tier `0` when omitted, so an all-omitted list of objects is one tier);
+///   tiers are visited in ascending order, and within a tier
+///   [`balancer::pick_weighted`] makes ONE random weighted pick (default
+///   weight `1`) — for THIS request. A bare string mixed into an otherwise
+///   tiered list gets the same defaults an all-omitted object would:
+///   weight `1`, tier `0`.
+///
+/// Either way the result is one string per surviving position, in the order
+/// [`Failover`] should try them — tiered mode just resolves each tier down
+/// to its single pick before handing the list on, so nothing downstream of
+/// this function ever has to know weights or tiers exist.
+fn resolve_models(entries: &[ModelCandidate]) -> Result<Vec<String>> {
+    if entries.iter().all(|e| matches!(e, ModelCandidate::Bare(_))) {
+        return Ok(entries
+            .iter()
+            .map(|e| match e {
+                ModelCandidate::Bare(model) => model.clone(),
+                ModelCandidate::Weighted { .. } => unreachable!("just matched Bare above"),
+            })
+            .collect());
+    }
+
+    if entries.len() > MAX_WEIGHTED_MODEL_ENTRIES {
+        return Err(Error::InvalidInput(format!(
+            "models must not exceed {MAX_WEIGHTED_MODEL_ENTRIES} entries"
+        )));
+    }
+
+    // BTreeMap so tiers come back in ascending numeric order regardless of
+    // the order their members appeared in the caller's list; each tier's own
+    // Vec keeps arrival order, though pick_weighted doesn't care about it.
+    let mut tiers: std::collections::BTreeMap<u32, Vec<balancer::Candidate>> =
+        std::collections::BTreeMap::new();
+    for entry in entries {
+        let (model, weight, failover) = match entry {
+            ModelCandidate::Bare(model) => (model.clone(), None, None),
+            ModelCandidate::Weighted {
+                model,
+                weight,
+                failover,
+            } => (model.clone(), *weight, *failover),
+        };
+        tiers
+            .entry(failover.unwrap_or(0))
+            .or_default()
+            .push(balancer::Candidate {
+                model_str: model,
+                weight: weight.unwrap_or(1),
+            });
+    }
+
+    tiers
+        .into_values()
+        .map(|tier| balancer::pick_weighted(&tier))
+        .collect()
 }
 
 /// Manages the candidate list, failover loop, deadline enforcement, and
@@ -1695,10 +1777,11 @@ mod tests {
 
     // ------------------------------------------------------- failover
 
-    /// A request that names its chain through the `models` extension.
+    /// A request that names its chain through the `models` extension, as
+    /// bare strings — today's plain ordered failover, no weighting.
     fn models_request(models: &[&str]) -> CreateChatCompletionRequest {
         CreateChatCompletionRequest {
-            models: Some(models.iter().map(|m| m.to_string()).collect()),
+            models: Some(models.iter().map(|&m| m.into()).collect()),
             messages: vec![ChatCompletionRequestMessage::new("user", "hi")],
             ..Default::default()
         }
@@ -1786,8 +1869,8 @@ mod tests {
     /// by the same error.
     #[test]
     fn build_candidates_caps_the_chain() {
-        let big: Vec<String> = (0..MAX_FAILOVER_CANDIDATES + 3)
-            .map(|i| format!("openai/gpt-5.6-{i}"))
+        let big: Vec<ModelCandidate> = (0..MAX_FAILOVER_CANDIDATES + 3)
+            .map(|i| format!("openai/gpt-5.6-{i}").into())
             .collect();
         let message = build_candidates(&CreateChatCompletionRequest {
             models: Some(big),
@@ -1801,6 +1884,164 @@ mod tests {
                 "must not exceed {MAX_FAILOVER_CANDIDATES} candidates"
             )),
             "{message}"
+        );
+    }
+
+    // ------------------------------------------- weighted, tiered `models`
+
+    /// A request naming its chain through weighted `models` objects.
+    fn weighted_models_request(entries: Vec<ModelCandidate>) -> CreateChatCompletionRequest {
+        CreateChatCompletionRequest {
+            models: Some(entries),
+            messages: vec![ChatCompletionRequestMessage::new("user", "hi")],
+            ..Default::default()
+        }
+    }
+
+    fn weighted(model: &str, weight: u32, failover: u32) -> ModelCandidate {
+        ModelCandidate::Weighted {
+            model: model.into(),
+            weight: Some(weight),
+            failover: Some(failover),
+        }
+    }
+
+    /// Every entry omitting both fields is one tier, so the chain resolves
+    /// to exactly ONE candidate — the same shape a single bare `model`
+    /// string would produce, just chosen by weight instead of being the
+    /// only option. This is what tells a plain balancing request (no
+    /// failover intended) apart from a failover one at the type level:
+    /// `requested_models` is still true, since the caller DID use `models`.
+    #[test]
+    fn an_untiered_weighted_list_resolves_to_one_candidate() {
+        let request = weighted_models_request(vec![
+            ModelCandidate::Weighted {
+                model: "openai/gpt-5.6".into(),
+                weight: Some(1),
+                failover: None,
+            },
+            ModelCandidate::Weighted {
+                model: "deepseek/deepseek-v4-flash".into(),
+                weight: Some(1),
+                failover: None,
+            },
+        ]);
+        let candidates = build_candidates(&request).unwrap();
+        assert_eq!(candidates.list.len(), 1, "{:?}", candidates.list);
+        assert!(
+            ["openai/gpt-5.6", "deepseek/deepseek-v4-flash"].contains(&candidates.list[0].as_str()),
+            "{:?}",
+            candidates.list
+        );
+        assert!(candidates.requested_models);
+    }
+
+    /// Tiers resolve to ONE candidate each, in ascending tier order — the
+    /// exact shape the reviewer's own scenario on PR warpllm/warpllm#79
+    /// describes: a weighted primary tier, then successively narrower
+    /// fallback tiers, each contributing exactly one slot to the chain.
+    #[test]
+    fn tiers_resolve_to_one_candidate_each_in_ascending_order() {
+        let request = weighted_models_request(vec![
+            weighted("openai/gpt-5.6", 1, 0),
+            weighted("anthropic/claude-opus-5", 2, 0),
+            weighted("kimi/k3", 1, 1),
+            weighted("deepseek/deepseek-v4-flash", 1, 2),
+            weighted("deepseek/deepseek-v4-pro", 1, 2),
+        ]);
+        let candidates = build_candidates(&request).unwrap();
+        assert_eq!(candidates.list.len(), 3, "{:?}", candidates.list);
+        assert!(
+            ["openai/gpt-5.6", "anthropic/claude-opus-5"].contains(&candidates.list[0].as_str()),
+            "tier 0: {:?}",
+            candidates.list
+        );
+        assert_eq!(candidates.list[1], "kimi/k3", "tier 1, the only member");
+        assert!(
+            ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
+                .contains(&candidates.list[2].as_str()),
+            "tier 2: {:?}",
+            candidates.list
+        );
+    }
+
+    /// The statistical property the design promises: within one tier, a
+    /// weight-2 candidate is picked roughly twice as often as a weight-1
+    /// one, across many independent resolutions — not a round-robin
+    /// guarantee over a fixed cycle, since each `build_candidates` call
+    /// starts fresh with no state to carry a cycle across requests.
+    #[test]
+    fn weighted_selection_within_a_tier_follows_the_ratio() {
+        let mut counts = std::collections::HashMap::new();
+        for _ in 0..3000 {
+            let request = weighted_models_request(vec![
+                weighted("openai/gpt-5.6", 1, 0),
+                weighted("anthropic/claude-opus-5", 2, 0),
+            ]);
+            let candidates = build_candidates(&request).unwrap();
+            *counts.entry(candidates.list[0].clone()).or_insert(0u32) += 1;
+        }
+        let opus_share = f64::from(counts["anthropic/claude-opus-5"]) / 3000.0;
+        assert!(
+            (0.58..0.75).contains(&opus_share),
+            "expected roughly two-thirds for the weight-2 candidate, got {opus_share} ({counts:?})"
+        );
+    }
+
+    /// A bare string mixed into an otherwise-tiered list gets the same
+    /// defaults an all-omitted object would: weight 1, tier 0 — so it joins
+    /// the primary tier's weighted pool rather than becoming its own
+    /// singleton tier the way it would in a pure bare-string list.
+    #[test]
+    fn a_bare_string_mixed_with_tiers_joins_the_primary_tier() {
+        let request = weighted_models_request(vec![
+            ModelCandidate::Bare("openai/gpt-5.6".into()),
+            weighted("kimi/k3", 1, 1),
+        ]);
+        let candidates = build_candidates(&request).unwrap();
+        assert_eq!(
+            candidates.list,
+            ["openai/gpt-5.6", "kimi/k3"],
+            "the bare entry is tier 0's only member, so it always wins tier 0"
+        );
+    }
+
+    /// Weight validation is not re-implemented for the tiered path — it
+    /// shares `balancer::pick_weighted`, so the identical errors
+    /// `BalancedClient` and `JsonBalancedClient` give surface here too.
+    #[test]
+    fn a_tiers_weights_are_validated_like_a_balancers() {
+        let all_zero = weighted_models_request(vec![weighted("openai/gpt-5.6", 0, 0)]);
+        let err = build_candidates(&all_zero).unwrap_err().to_string();
+        assert!(err.contains("weight 0"), "{err}");
+
+        let too_big = weighted_models_request(vec![ModelCandidate::Weighted {
+            model: "openai/gpt-5.6".into(),
+            weight: Some(u32::MAX),
+            failover: Some(0),
+        }]);
+        let err = build_candidates(&too_big).unwrap_err().to_string();
+        assert!(err.contains("exceeds the maximum"), "{err}");
+    }
+
+    /// A tier's member count is bounded independently of the resolved
+    /// chain length, which the ordinary `MAX_FAILOVER_CANDIDATES` cap
+    /// cannot see: a thousand weighted entries in ONE tier still resolve
+    /// to a one-candidate chain, so only a check on the raw entry count
+    /// catches it.
+    #[test]
+    fn a_single_tiers_entry_count_is_capped_independently() {
+        let big: Vec<ModelCandidate> = (0..MAX_WEIGHTED_MODEL_ENTRIES + 1)
+            .map(|i| weighted(&format!("openai/gpt-5.6-{i}"), 1, 0))
+            .collect();
+        let err = build_candidates(&weighted_models_request(big))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!(
+                "must not exceed {MAX_WEIGHTED_MODEL_ENTRIES} entries"
+            )),
+            "{err}"
         );
     }
 
@@ -2169,6 +2410,103 @@ mod tests {
             }
             other => panic!("expected CandidatesExhausted, got {other:?}"),
         }
+    }
+
+    /// The reviewer's own scenario end to end, over real HTTP mocks rather
+    /// than `build_candidates` alone: a weighted primary tier fails over to
+    /// a solo fallback tier, which fails over to a second weighted tier
+    /// that finally serves the request — three tiers, two failovers, one
+    /// reply. Every tier here has exactly one live member on the path taken
+    /// (weight only matters for WHICH provider is tried, never whether
+    /// failover happens), so the sequence is deterministic without needing
+    /// a statistical assertion.
+    #[tokio::test]
+    async fn weighted_tiers_fail_over_across_tiers_end_to_end() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // Tier 0: gpt-5.6, the only candidate this test lets weighted
+        // selection actually pick among fixed choices — its outcome (429)
+        // is the same whichever tier-0 member selection lands on.
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(serde_json::json!({"model": "gpt-5.6"})))
+            .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
+                "error": {"message": "slow down", "type": "rate_limit_error", "code": "rate_limit_exceeded"}
+            })))
+            .mount(&server)
+            .await;
+        // Tier 1: the solo fallback, also retryable.
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(
+                serde_json::json!({"model": "deepseek-v4-flash"}),
+            ))
+            .respond_with(ResponseTemplate::new(503).set_body_json(serde_json::json!({
+                "error": {"message": "load", "type": "server_error", "code": "server_error"}
+            })))
+            .mount(&server)
+            .await;
+        // Tier 2: the only member this test's weights ever resolve to
+        // (weight 1 against weight 0 within the tier), and where the chain
+        // finally succeeds.
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(
+                serde_json::json!({"model": "mistral-large-2411"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-3",
+                "object": "chat.completion",
+                "created": 1_700_000_000,
+                "model": "mistral-large-2411",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "served by mistral"},
+                    "finish_reason": "stop"
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = with_env(
+            &[
+                ("OPENAI_API_KEY", Some("sk-openai")),
+                ("DEEPSEEK_API_KEY", Some("sk-deepseek")),
+                ("MISTRAL_API_KEY", Some("sk-mistral")),
+            ],
+            || {
+                Client::new(ClientConfig {
+                    base_url: Some(server.uri()),
+                    ..Default::default()
+                })
+                .unwrap()
+            },
+        );
+        let completion = client
+            .chat_completions(weighted_models_request(vec![
+                weighted("openai/gpt-5.6", 1, 0),
+                weighted("deepseek/deepseek-v4-flash", 1, 1),
+                weighted("mistral/mistral-large-2411", 1, 2),
+                // A weight-0 tier-2 member the chain must never reach,
+                // since a tier resolves to exactly one pick before any
+                // request goes out — this proves that pick, not "every
+                // tier-2 member gets tried."
+                weighted("mistral/ministral-8b-2410", 0, 2),
+            ]))
+            .await
+            .expect("tier 2 serves after tiers 0 and 1 both fail retryably");
+        assert_eq!(completion.model, "mistral/mistral-large-2411");
+        assert_eq!(
+            completion.choices[0].message.content,
+            Some("served by mistral".into())
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            3,
+            "all three tiers were tried, in order"
+        );
     }
 
     fn sse_chunk() -> String {

@@ -61,8 +61,8 @@ pub use protocol::openai_compat::chat_completions::types::{
     ChatCompletionResponseFormat, ChatCompletionStop, ChatCompletionStreamOptions,
     ChatCompletionTool, ChatCompletionToolChoiceOption, CreateChatCompletionRequest,
     CreateChatCompletionResponse, CreateChatCompletionStreamResponse, Custom, FileContent,
-    Function, FunctionObject, ImageUrl, InputAudio, JsonSchemaDefinition, ResponseFormatJsonSchema,
-    ResponseFormatSimple, ToolChoiceFunction,
+    Function, FunctionObject, ImageUrl, InputAudio, JsonSchemaDefinition, ModelCandidate,
+    ResponseFormatJsonSchema, ResponseFormatSimple, ToolChoiceFunction,
 };
 /// A failure rendered the way an OpenAI-compatible surface reports it, and
 /// the only error shape warpllm shows anyone who is not writing Rust.

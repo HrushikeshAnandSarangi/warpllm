@@ -524,7 +524,7 @@ mod tests {
             "the required `model: string,` must be consumed:\n{patched}"
         );
         assert!(
-            patched.contains("models?: Array<string> | null,"),
+            patched.contains("models?: Array<ModelCandidate> | null,"),
             "the models field must stay as-is:\n{patched}"
         );
     }

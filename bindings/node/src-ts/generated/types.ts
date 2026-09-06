@@ -170,13 +170,27 @@ export type CreateChatCompletionRequest = {
  */
 model?: string,
 /**
- * warpllm extension: ordered candidate models for per-request
- * failover. When present, the client tries each model in order on
- * retryable errors; the first successful one serves the request.
- * Consumed at ingest time; not forwarded upstream.
+ * warpllm extension: candidate models for per-request failover, and
+ * optionally weighted balancing within a failover tier. Consumed at
+ * ingest time; not forwarded upstream.
  *
  * Mutually exclusive with `model`: set this instead of `model`, never
  * alongside it, and never as an empty list.
+ *
+ * Two ways to write an entry, and they may be mixed:
+ *
+ * - A bare string is a plain failover candidate: tried once, in the
+ *   order given, no weighting — every candidate is its own tier.
+ * - `{model, weight?, failover?}` groups candidates into TIERS.
+ *   `failover` names the tier (default `0`, the primary one) and tiers
+ *   are tried in ascending order on retryable failure. Within a tier,
+ *   ONE candidate is chosen per request by weighted random sampling
+ *   (`weight` defaults to `1`) — so `[{model: a, weight: 1}, {model: b,
+ *   weight: 2}]` sends roughly a third of requests to `a` and two
+ *   thirds to `b`, and only moves to the next tier if the one picked
+ *   fails. A bare string mixed into a tiered list gets the same
+ *   defaults an entry with both fields omitted would: `weight: 1`,
+ *   tier `0`.
  *
  * The commit point differs by surface. Non-streaming: a whole reply,
  * so any candidate that completes is the winner. Streaming: only
@@ -185,7 +199,7 @@ model?: string,
  * cannot be unsent (a mid-stream failure surfaces to the caller with
  * no failover, and cannot be retried without duplicating output).
  */
-models?: Array<string> | null, messages: Array<ChatCompletionRequestMessage>, temperature?: number | null, max_tokens?: number | null, top_p?: number | null, stop?: ChatCompletionStop | null, stream?: boolean | null, stream_options?: ChatCompletionStreamOptions | null,
+models?: Array<ModelCandidate> | null, messages: Array<ChatCompletionRequestMessage>, temperature?: number | null, max_tokens?: number | null, top_p?: number | null, stop?: ChatCompletionStop | null, stream?: boolean | null, stream_options?: ChatCompletionStreamOptions | null,
 /**
  * Tools the model may call.
  */
@@ -337,6 +351,18 @@ export type JsonSchemaDefinition = { name: string, description?: string | null,
 schema?: JsonValue | null, strict?: boolean | null, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]: JsonValue } | null;
+
+export type ModelCandidate = string | { model: string,
+/**
+ * Relative share of this tier's traffic. Defaults to `1` when
+ * omitted, same as a bare-string entry.
+ */
+weight?: number,
+/**
+ * Which failover tier this candidate belongs to, ascending order.
+ * Defaults to `0`, the primary tier, when omitted.
+ */
+failover?: number, };
 
 export type ModerationOutcome = ChatCompletionModerationResults | ChatCompletionModerationError;
 
