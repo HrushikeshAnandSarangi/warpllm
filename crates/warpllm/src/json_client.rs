@@ -156,14 +156,14 @@ impl JsonBalancedClient {
 
     pub async fn chat_completions(&self, request_json: &str) -> Result<String> {
         let request: CreateChatCompletionRequest = parse_request(request_json)?;
-        let request = prepare_balanced(&self.balancer, request);
+        let request = prepare_balanced(&self.balancer, request)?;
         let response = self.client.chat_completions(request).await?;
         serde_json::to_string(&response).map_err(|error| Error::Internal(error.to_string()))
     }
 
     pub async fn chat_completions_stream(&self, request_json: &str) -> Result<JsonChatStream> {
         let request: CreateChatCompletionRequest = parse_request(request_json)?;
-        let request = prepare_balanced(&self.balancer, request);
+        let request = prepare_balanced(&self.balancer, request)?;
         Ok(JsonChatStream {
             inner: self.client.chat_completions_stream(request).await?,
         })

@@ -90,7 +90,14 @@ impl<'a> BalancedClient<'a> {
 
     /// Selects the next candidate and returns a new request with the
     /// `model` field rewritten to match.
-    fn prepare(&self, request: CreateChatCompletionRequest) -> CreateChatCompletionRequest {
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidInput`] if the request carries a `models` failover
+    /// list: the balancer's weighted selection IS the candidate choice, and
+    /// silently dropping the caller's redundancy would leave them believing
+    /// they have failover when they have none.
+    fn prepare(&self, request: CreateChatCompletionRequest) -> Result<CreateChatCompletionRequest> {
         prepare_balanced(&self.balancer, request)
     }
 
@@ -104,7 +111,7 @@ impl<'a> BalancedClient<'a> {
         &self,
         request: CreateChatCompletionRequest,
     ) -> Result<CreateChatCompletionResponse> {
-        let request = self.prepare(request);
+        let request = self.prepare(request)?;
         self.client.chat_completions(request).await
     }
 
@@ -115,7 +122,7 @@ impl<'a> BalancedClient<'a> {
         &self,
         request: CreateChatCompletionRequest,
     ) -> Result<ChatCompletionStream> {
-        let request = self.prepare(request);
+        let request = self.prepare(request)?;
         self.client.chat_completions_stream(request).await
     }
 }
@@ -131,13 +138,30 @@ impl<'a> BalancedClient<'a> {
 /// one line is the entire routing decision, and every language a caller
 /// might come from needs to make it identically — a future gate added here
 /// (or removed) reaches both without anyone having to remember the second
-/// copy exists.
+/// copy exists. That includes the `models` rejection below: both bindings
+/// inherit it from here rather than one of the two copies drifting, which is
+/// exactly the divergence PR #79's review caught between this function's
+/// first version and `JsonBalancedClient`'s own inlined selection.
+///
+/// # Errors
+///
+/// [`Error::InvalidInput`] if the request carries a `models` failover list:
+/// the balancer's weighted selection IS the candidate choice, and silently
+/// dropping the caller's redundancy would leave them believing they have
+/// failover when they have none.
 pub(crate) fn prepare_balanced(
     balancer: &Balancer,
-    mut request: CreateChatCompletionRequest,
-) -> CreateChatCompletionRequest {
+    request: CreateChatCompletionRequest,
+) -> Result<CreateChatCompletionRequest> {
+    if request.models.is_some() {
+        return Err(Error::InvalidInput(
+            "models is not supported with BalancedClient; the balancer selects the candidate"
+                .into(),
+        ));
+    }
+    let mut request = request;
     request.model.clone_from(&balancer.select().model_str);
-    request
+    Ok(request)
 }
 
 #[cfg(test)]
@@ -203,7 +227,26 @@ mod tests {
             model: "caller/group-name".into(),
             ..Default::default()
         };
-        let prepared = prepare_balanced(&balancer, request);
+        let prepared = prepare_balanced(&balancer, request).unwrap();
         assert_eq!(prepared.model, "a/test");
+    }
+
+    /// The other half of `prepare_balanced`'s contract: a `models` failover
+    /// list is refused rather than silently dropped, so a caller cannot
+    /// believe they have failover through a `BalancedClient` when the
+    /// balancer's own weighted pick is the only choice actually made.
+    #[test]
+    fn prepare_balanced_refuses_a_models_failover_list() {
+        let balancer = Balancer::new(vec![Candidate {
+            model_str: "a/test".into(),
+            weight: 1,
+        }])
+        .unwrap();
+        let request = CreateChatCompletionRequest {
+            models: Some(vec!["a/test".into(), "b/test".into()].into()),
+            ..Default::default()
+        };
+        let err = prepare_balanced(&balancer, request).unwrap_err();
+        assert!(err.to_string().contains("models is not supported"), "{err}");
     }
 }
