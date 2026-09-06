@@ -164,6 +164,9 @@ export type CreateChatCompletionRequest = {
  * TypeScript/Python types widen from required to optional. (ts-rs
  * cannot mark a non-`Option` field optional, so warpllm-codegen patches
  * the TypeScript declaration after generation.)
+ *
+ * Mutually exclusive with `models`: a request sets exactly one of the
+ * two, never both and never neither.
  */
 model?: string,
 /**
@@ -171,6 +174,9 @@ model?: string,
  * failover. When present, the client tries each model in order on
  * retryable errors; the first successful one serves the request.
  * Consumed at ingest time; not forwarded upstream.
+ *
+ * Mutually exclusive with `model`: set this instead of `model`, never
+ * alongside it, and never as an empty list.
  *
  * The commit point differs by surface. Non-streaming: a whole reply,
  * so any candidate that completes is the winner. Streaming: only

@@ -206,27 +206,8 @@ impl Client {
             ));
         }
         let candidates = build_candidates(&request)?;
-
-        // Validate ALL candidates before any exchange. An unroutable
-        // candidate fails the whole request — it is not skipped. Each of
-        // those four failures is a caller mistake, not a transient upstream
-        // condition, and a typo in candidate 3 believes they have three-way
-        // redundancy and has two — that is worth a refusal at admission,
-        // where the message can name the candidate and the gate it failed.
-        let validated: Vec<(String, ModelDefinition<'_>)> = candidates
-            .list
-            .iter()
-            .map(|c| {
-                self.validate(c, Api::OpenAiCompatChatCompletions)
-                    .map(|def| (c.clone(), def))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let mut failover = Failover::new(
-            validated.iter().map(|(c, _)| c.clone()).collect(),
-            self.config.timeout_secs,
-            candidates.requested_models,
-        );
+        let (validated, mut failover) =
+            self.prepare_failover(&candidates, Api::OpenAiCompatChatCompletions)?;
 
         // A single candidate gets NO chain deadline. Its guarantee is the
         // reqwest per-request timeout, exactly as before this feature
@@ -242,15 +223,9 @@ impl Client {
         let run = async {
             loop {
                 let (candidate, def) = match failover.next() {
-                    Some(c) => {
-                        // We validated above, so look up the pre-validated def.
-                        let def = validated
-                            .iter()
-                            .find(|(name, _)| name == c)
-                            .map(|(_, def)| def)
-                            .expect("validated list matches failover candidates");
-                        (c.to_string(), def)
-                    }
+                    // The index IS the lookup: `validated` and
+                    // `failover.candidates` share one order.
+                    Some((idx, c)) => (c.to_string(), &validated[idx].1),
                     None => break Err(failover.exhausted()),
                 };
 
@@ -326,22 +301,8 @@ impl Client {
     ) -> Result<ChatCompletionStream> {
         request.stream = Some(true);
         let built = build_candidates(&request)?;
-
-        // Validate ALL candidates upfront, same as chat_completions.
-        let validated: Vec<(String, ModelDefinition<'_>)> = built
-            .list
-            .iter()
-            .map(|c| {
-                self.validate(c, Api::OpenAiCompatChatCompletionsStream)
-                    .map(|def| (c.clone(), def))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let mut failover = Failover::new(
-            validated.iter().map(|(c, _)| c.clone()).collect(),
-            self.config.timeout_secs,
-            built.requested_models,
-        );
+        let (validated, mut failover) =
+            self.prepare_failover(&built, Api::OpenAiCompatChatCompletionsStream)?;
 
         // Same single-candidate rule as chat_completions: no chain deadline
         // when there is no chain, so the streaming path's guarantee for one
@@ -352,14 +313,9 @@ impl Client {
         let run = async {
             loop {
                 let (candidate, def) = match failover.next() {
-                    Some(c) => {
-                        let def = validated
-                            .iter()
-                            .find(|(name, _)| name == c)
-                            .map(|(_, def)| def)
-                            .expect("validated list matches failover candidates");
-                        (c.to_string(), def)
-                    }
+                    // The index IS the lookup: `validated` and
+                    // `failover.candidates` share one order.
+                    Some((idx, c)) => (c.to_string(), &validated[idx].1),
                     None => break Err(failover.exhausted()),
                 };
 
@@ -508,6 +464,36 @@ impl Client {
             model,
             auth: self.authenticator(provider)?,
         })
+    }
+
+    /// Validates every candidate against `api` and builds the [`Failover`]
+    /// chain over them — the setup [`Client::chat_completions`] and
+    /// [`Client::chat_completions_stream`] share verbatim, before their
+    /// loops diverge on how each surface commits to a winner.
+    ///
+    /// Validates ALL candidates before any exchange. An unroutable
+    /// candidate fails the whole request — it is not skipped. Each of the
+    /// four [`Client::validate`] gates is a caller mistake, not a transient
+    /// upstream condition, and a typo in candidate 3 believes they have
+    /// three-way redundancy and has two — that is worth a refusal at
+    /// admission, where the message can name the candidate and the gate it
+    /// failed.
+    fn prepare_failover(
+        &self,
+        candidates: &Candidates,
+        api: Api,
+    ) -> Result<(Vec<(String, ModelDefinition<'_>)>, Failover)> {
+        let validated: Vec<(String, ModelDefinition<'_>)> = candidates
+            .list
+            .iter()
+            .map(|c| self.validate(c, api).map(|def| (c.clone(), def)))
+            .collect::<Result<Vec<_>>>()?;
+        let failover = Failover::new(
+            validated.iter().map(|(c, _)| c.clone()).collect(),
+            self.config.timeout_secs,
+            candidates.requested_models,
+        );
+        Ok((validated, failover))
     }
 
     /// Whether this client serves the routed provider at all.
@@ -772,15 +758,23 @@ impl Failover {
         }
     }
 
-    /// The next candidate, or `None` when the list is exhausted.
+    /// The next candidate's index into the validated list and its string,
+    /// or `None` when the list is exhausted.
+    ///
+    /// Returns the INDEX rather than making the caller search the validated
+    /// list for a name match: `self.candidates` is built from that list in
+    /// the same order (see [`Client::chat_completions`]), so the index this
+    /// cursor already tracks is the answer, and a linear re-lookup by name
+    /// would just rediscover it.
     ///
     /// ADVANCES the cursor, so the loop terminates by construction: getting
     /// `Some` on one iteration can never yield the same candidate on the
     /// next, no matter whether the iteration records a failure or not.
-    fn next(&mut self) -> Option<&str> {
-        let candidate = self.candidates.get(self.idx)?;
+    fn next(&mut self) -> Option<(usize, &str)> {
+        let idx = self.idx;
+        let candidate = self.candidates.get(idx)?;
         self.idx += 1;
-        Some(candidate.as_str())
+        Some((idx, candidate.as_str()))
     }
 
     /// Time remaining until the overall deadline, or `Duration::ZERO` if
@@ -1548,14 +1542,14 @@ mod tests {
             Some(60),
             true,
         );
-        assert_eq!(failover.next(), Some("openai/gpt-5.6"));
+        assert_eq!(failover.next(), Some((0, "openai/gpt-5.6")));
         // A failure is recorded AFTER `next` advanced — this is the exact
         // sequence the loop uses — yet the next call still moves on.
         failover.record_failure(
             "openai/gpt-5.6".into(),
             Error::RateLimited(Box::new(provider_error())),
         );
-        assert_eq!(failover.next(), Some("deepseek/deepseek-v4-flash"));
+        assert_eq!(failover.next(), Some((1, "deepseek/deepseek-v4-flash")));
         assert_eq!(failover.next(), None, "the chain is exhausted");
         assert_eq!(failover.next(), None, "exhaustion is stable");
     }
