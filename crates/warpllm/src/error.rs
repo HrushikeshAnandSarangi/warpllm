@@ -562,6 +562,31 @@ mod tests {
                 500,
                 "server_error",
             ),
+            // A failover chain's own verdicts belong here too: neither has an
+            // upstream to borrow a status from, and both are fixed regardless
+            // of which candidate failed how or in what order — see
+            // `gateway::openai_compat::error::an_exhausted_chain_is_a_gateway_wide_503`
+            // and `a_chain_deadline_is_a_gateway_504` for the header-level
+            // detail (no leaked retry-after/request-id) this table's shape
+            // cannot express.
+            (
+                Error::CandidatesExhausted {
+                    models: vec!["openai/gpt-5.6".into(), "deepseek/deepseek-v4-flash".into()],
+                    tried: vec![
+                        ("openai/gpt-5.6".into(), Box::new(rate_limit())),
+                        ("deepseek/deepseek-v4-flash".into(), Box::new(rate_limit())),
+                    ],
+                },
+                503,
+                "server_error",
+            ),
+            (
+                Error::DeadlineExceeded {
+                    tried: vec![("openai/gpt-5.6".into(), Box::new(rate_limit()))],
+                },
+                504,
+                "server_error",
+            ),
         ];
         for (error, status, error_type) in cases {
             let rendered = error.to_openai();
