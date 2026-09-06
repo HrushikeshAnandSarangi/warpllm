@@ -411,7 +411,7 @@ impl Client {
                         break Ok(completion);
                     }
                     Err(e) => {
-                        if is_retryable(&e) {
+                        if is_retriable(&e) {
                             tracing::warn!(
                                 candidate = %candidate,
                                 error = %e,
@@ -593,7 +593,7 @@ impl Client {
                         }
                     }
                     Err(e) => {
-                        if is_retryable(&e) {
+                        if is_retriable(&e) {
                             tracing::warn!(
                                 candidate = %candidate,
                                 error = %e,
@@ -826,7 +826,7 @@ impl Client {
 /// across a provider's own OpenAI-compatible surface), and `Unknown`
 /// (failing over turns one unexplained failure into several billed ones).
 /// Anything warpllm itself decided (`Gateway` origin) is also fatal.
-fn is_retryable(err: &Error) -> bool {
+fn is_retriable(err: &Error) -> bool {
     matches!(
         err,
         Error::Network { .. }
@@ -852,7 +852,7 @@ fn is_retryable(err: &Error) -> bool {
 /// stalled stream must surface to the caller as itself, never as another
 /// candidate spliced in.
 fn fails_over_before_first_chunk(err: &Error) -> bool {
-    is_retryable(err)
+    is_retriable(err)
         || matches!(
             err,
             Error::StreamTruncated { .. } | Error::StreamStalled { .. }
@@ -1937,7 +1937,7 @@ mod tests {
             Error::QuotaExceeded(Box::new(p())),
         ];
         for error in &retryable {
-            assert!(is_retryable(error), "should fail over: {error:?}");
+            assert!(is_retriable(error), "should fail over: {error:?}");
             assert!(
                 fails_over_before_first_chunk(error),
                 "the prefetch grants the exchange-level table: {error:?}"
@@ -1957,7 +1957,7 @@ mod tests {
             Error::InvalidInput("payload".into()),
         ];
         for error in &fatal {
-            assert!(!is_retryable(error), "must stop the chain: {error:?}");
+            assert!(!is_retriable(error), "must stop the chain: {error:?}");
         }
     }
 
