@@ -38,6 +38,7 @@
 
 mod header;
 mod oauth;
+mod token_provider;
 
 #[cfg(test)]
 pub(crate) mod testing;
@@ -45,7 +46,7 @@ pub(crate) mod testing;
 use crate::error::Result;
 
 pub(crate) use header::Header;
-pub(crate) use oauth::OauthBearer;
+pub(crate) use oauth::OAuth;
 
 /// One provider's resolved credential.
 ///
@@ -77,7 +78,7 @@ pub(crate) enum Authenticator {
     /// real and tested; only the constructor that would reach them from a
     /// live request is missing.
     #[allow(dead_code)]
-    OauthBearer(OauthBearer),
+    OAuth(OAuth),
 }
 
 impl Authenticator {
@@ -90,13 +91,10 @@ impl Authenticator {
     /// `x-api-key: <secret>` — Anthropic's spelling, which deliberately does
     /// NOT also set `Authorization`.
     ///
-    /// Reads as dead outside tests, and is: nothing routes to Anthropic yet, so
-    /// [`crate::credentials`] never picks this scheme and the whole
-    /// `gateway::anthropic` tree that would reach it is staged behind the same
-    /// attribute. Both allows come off on the change that adds the roster entry
-    /// and the surface — the same change that drops the one at
-    /// `gateway/mod.rs`.
-    #[allow(dead_code)]
+    /// Picked by [`crate::credentials::Credentials::scheme`] for the
+    /// `anthropic` provider, and by nothing else: the scheme is a fact about a
+    /// provider rather than about the protocol it speaks, so a host re-hosting
+    /// Claude behind a bearer header still gets bearer.
     pub(crate) fn anthropic_api_key(secret: String) -> Self {
         Self::Header(Header::anthropic_api_key(secret))
     }
@@ -111,7 +109,7 @@ impl Authenticator {
     pub(crate) async fn authenticate(&self, request: reqwest::Request) -> Result<reqwest::Request> {
         match self {
             Authenticator::Header(header) => header.apply(request),
-            Authenticator::OauthBearer(oauth) => oauth.apply(request),
+            Authenticator::OAuth(oauth) => oauth.apply(request).await,
         }
     }
 }
