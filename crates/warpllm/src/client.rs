@@ -176,17 +176,6 @@ impl Client {
         // TLS-init failure. The roster comes first of the two because the
         // declaration is checked against it.
         let specs_path = Self::specs_path(&config);
-        // Both are global redirections of where a request goes, and the first
-        // wins over the second — including over the local address that was the
-        // whole reason for writing the roster. Nobody means that.
-        if let (Some(base_url), Some(path)) = (&config.base_url, &specs_path) {
-            tracing::warn!(
-                base_url,
-                roster = %path.display(),
-                "base_url overrides EVERY provider, the roster file's own \
-                 included, so nothing will reach the addresses it names"
-            );
-        }
         let registry = registry::load_for_client(specs_path.as_deref())?;
         Self::validate_declarations(&config, &registry)?;
         let http = reqwest::Client::builder()
@@ -790,15 +779,19 @@ impl Client {
         )))
     }
 
-    /// A configured `base_url` overrides the provider default (proxies,
-    /// tests); otherwise each provider talks to its own API.
+    /// A `base_url` declared for THIS provider overrides its default
+    /// (proxies, tests, or — Vertex, #25 — an address the roster cannot
+    /// hold one universal value for at all); every other provider is
+    /// untouched.
     ///
     /// One lifetime for both, spelled out: the answer borrows from whichever
     /// won, and elision would otherwise take it from `&self` alone.
     fn base_url<'a>(&'a self, provider: &'a ProviderSpec) -> &'a str {
         self.config
-            .base_url
-            .as_deref()
+            .providers
+            .as_ref()
+            .and_then(|providers| providers.get(provider.name()))
+            .and_then(|entry| entry.base_url.as_deref())
             .unwrap_or(provider.base_url())
     }
 }
@@ -1126,6 +1119,32 @@ mod tests {
     /// about what is set — see [`with_env`] for why.
     fn client(config: ClientConfig) -> Client {
         with_env(&[], || Client::new(config).unwrap())
+    }
+
+    /// A [`ClientConfig`] routing each named provider to `uri`, with no key
+    /// of its own — for the failover tests below, which want several
+    /// providers all answering from the same mock server. `base_url` is
+    /// per-provider (see [`ProviderConfig::base_url`]), so pointing a whole
+    /// chain at one mock means one entry per provider it names, not a
+    /// single client-wide override.
+    fn config_pointing_at(uri: &str, providers: &[&str]) -> ClientConfig {
+        ClientConfig {
+            providers: Some(
+                providers
+                    .iter()
+                    .map(|&name| {
+                        (
+                            name.to_string(),
+                            ProviderConfig {
+                                api_key: None,
+                                base_url: Some(uri.to_string()),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            ..Default::default()
+        }
     }
 
     /// The two halves the client works from, for a model the shipped roster
@@ -1464,6 +1483,7 @@ mod tests {
                     "openai".to_string(),
                     ProviderConfig {
                         api_key: Some("sk-inline".into()),
+                        base_url: None,
                     },
                 )])),
                 ..Default::default()
@@ -1642,7 +1662,13 @@ mod tests {
             .await;
 
         let client = client(ClientConfig {
-            base_url: Some(server.uri()),
+            providers: Some(BTreeMap::from([(
+                "openai".to_string(),
+                ProviderConfig {
+                    api_key: None,
+                    base_url: Some(server.uri()),
+                },
+            )])),
             ..Default::default()
         });
         let request = CreateChatCompletionRequest {
@@ -1684,7 +1710,13 @@ mod tests {
     #[test]
     fn configured_base_url_wins_over_the_default() {
         let client = client(ClientConfig {
-            base_url: Some("http://localhost:9999".into()),
+            providers: Some(BTreeMap::from([(
+                "openai".to_string(),
+                ProviderConfig {
+                    api_key: None,
+                    base_url: Some("http://localhost:9999".into()),
+                },
+            )])),
             ..Default::default()
         });
         assert_eq!(
@@ -2041,13 +2073,7 @@ mod tests {
                 ("OPENAI_API_KEY", Some("sk-openai")),
                 ("DEEPSEEK_API_KEY", Some("sk-deepseek")),
             ],
-            || {
-                Client::new(ClientConfig {
-                    base_url: Some(server.uri()),
-                    ..Default::default()
-                })
-                .unwrap()
-            },
+            || Client::new(config_pointing_at(&server.uri(), &["openai", "deepseek"])).unwrap(),
         );
         let completion = client
             .chat_completions(models_request(&[
@@ -2096,13 +2122,7 @@ mod tests {
                 ("OPENAI_API_KEY", Some("sk-openai")),
                 ("DEEPSEEK_API_KEY", Some("sk-deepseek")),
             ],
-            || {
-                Client::new(ClientConfig {
-                    base_url: Some(server.uri()),
-                    ..Default::default()
-                })
-                .unwrap()
-            },
+            || Client::new(config_pointing_at(&server.uri(), &["openai", "deepseek"])).unwrap(),
         );
         let err = client
             .chat_completions(models_request(&[
@@ -2147,13 +2167,7 @@ mod tests {
                 ("OPENAI_API_KEY", Some("sk-openai")),
                 ("DEEPSEEK_API_KEY", Some("sk-deepseek")),
             ],
-            || {
-                Client::new(ClientConfig {
-                    base_url: Some(server.uri()),
-                    ..Default::default()
-                })
-                .unwrap()
-            },
+            || Client::new(config_pointing_at(&server.uri(), &["openai", "deepseek"])).unwrap(),
         );
         let err = client
             .chat_completions(models_request(&[
@@ -2220,13 +2234,7 @@ mod tests {
                 ("OPENAI_API_KEY", Some("sk-openai")),
                 ("DEEPSEEK_API_KEY", Some("sk-deepseek")),
             ],
-            || {
-                Client::new(ClientConfig {
-                    base_url: Some(server.uri()),
-                    ..Default::default()
-                })
-                .unwrap()
-            },
+            || Client::new(config_pointing_at(&server.uri(), &["openai", "deepseek"])).unwrap(),
         );
         let mut stream = client
             .chat_completions_stream(models_request(&[
@@ -2298,13 +2306,7 @@ mod tests {
                 ("OPENAI_API_KEY", Some("sk-openai")),
                 ("DEEPSEEK_API_KEY", Some("sk-deepseek")),
             ],
-            || {
-                Client::new(ClientConfig {
-                    base_url: Some(server.uri()),
-                    ..Default::default()
-                })
-                .unwrap()
-            },
+            || Client::new(config_pointing_at(&server.uri(), &["openai", "deepseek"])).unwrap(),
         );
         let mut stream = client
             .chat_completions_stream(models_request(&[
@@ -2356,13 +2358,7 @@ mod tests {
                 ("OPENAI_API_KEY", Some("sk-openai")),
                 ("DEEPSEEK_API_KEY", Some("sk-deepseek")),
             ],
-            || {
-                Client::new(ClientConfig {
-                    base_url: Some(server.uri()),
-                    ..Default::default()
-                })
-                .unwrap()
-            },
+            || Client::new(config_pointing_at(&server.uri(), &["openai", "deepseek"])).unwrap(),
         );
         let mut stream = client
             .chat_completions_stream(models_request(&[
@@ -2379,6 +2375,24 @@ mod tests {
             server.received_requests().await.unwrap().len(),
             1,
             "an empty-but-complete reply commits, never fails over"
+        );
+    }
+
+    #[test]
+    fn an_unconfigured_providers_base_url_is_unaffected() {
+        let client = client(ClientConfig {
+            providers: Some(BTreeMap::from([(
+                "openai".to_string(),
+                ProviderConfig {
+                    api_key: None,
+                    base_url: Some("http://localhost:9999".into()),
+                },
+            )])),
+            ..Default::default()
+        });
+        assert_eq!(
+            client.base_url(pair_for("deepseek/deepseek-v4-flash").0),
+            "https://api.deepseek.com"
         );
     }
 }
