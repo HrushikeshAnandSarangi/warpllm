@@ -107,6 +107,34 @@ fn reject_untranslatable(request: &crate::gateway::types::ChatRequest) -> Result
     Ok(())
 }
 
+/// Routes to the candidate's egress protocol, sharing the decision between
+/// [`Client::chat_completions`] and [`Client::chat_completions_stream`] —
+/// the two exchange functions differ per surface (a whole reply vs a
+/// stream), but which protocol to speak, and the [`reject_untranslatable`]
+/// gate guarding the translated one, never does.
+///
+/// Takes the two calls as FUTURES rather than as arguments `dispatch_egress`
+/// would build the request from itself: an `async fn` call constructs a
+/// future without running its body, so passing both costs nothing beyond
+/// the branch not taken being dropped unawaited — and it is what lets each
+/// caller keep its own exchange function, argument list, and result
+/// wrapping (`Chunks::OpenAiCompat(Box::new(chunks))` and friends) local to
+/// itself instead of threaded through this function's signature.
+async fn dispatch_egress<T>(
+    egress: Egress,
+    normalized: &crate::gateway::types::ChatRequest,
+    openai_compat: impl std::future::Future<Output = Result<T>>,
+    anthropic: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    match egress {
+        Egress::OpenAiCompat => openai_compat.await,
+        Egress::Anthropic => match reject_untranslatable(normalized) {
+            Ok(()) => anthropic.await,
+            Err(e) => Err(e),
+        },
+    }
+}
+
 /// The fields chat completions can state, Anthropic cannot, and that change the
 /// answer or its shape — each paired with the test for whether the caller
 /// actually MEANT it.
@@ -351,38 +379,31 @@ impl Client {
                 // surface. Both arms return the same gateway type, which is
                 // what lets both share one `render_response` and one
                 // failover disposition below.
-                let outcome = match def.egress {
-                    Egress::OpenAiCompat => {
-                        openai_compat::api::chat_completions::exchange(
-                            &normalized,
-                            &self.http,
-                            def.provider.name(),
-                            self.base_url(def.provider),
-                            def.auth,
-                        )
-                        .await
-                    }
-                    Egress::Anthropic => match reject_untranslatable(&normalized) {
-                        Ok(()) => {
-                            anthropic::api::messages::exchange(
-                                &normalized,
-                                &self.http,
-                                def.provider.name(),
-                                self.base_url(def.provider),
-                                def.auth,
-                                // Anthropic REQUIRES a `max_tokens` and the
-                                // gateway form's is optional, so the
-                                // roster's ceiling is the fallback. A model
-                                // documenting none and a caller naming none
-                                // is a refusal, not an invented default —
-                                // see `anthropic::…::request::resolve_max_tokens`.
-                                def.model.capabilities().max_output_tokens(),
-                            )
-                            .await
-                        }
-                        Err(e) => Err(e),
-                    },
-                };
+                let outcome = dispatch_egress(
+                    def.egress,
+                    &normalized,
+                    openai_compat::api::chat_completions::exchange(
+                        &normalized,
+                        &self.http,
+                        def.provider.name(),
+                        self.base_url(def.provider),
+                        def.auth,
+                    ),
+                    anthropic::api::messages::exchange(
+                        &normalized,
+                        &self.http,
+                        def.provider.name(),
+                        self.base_url(def.provider),
+                        def.auth,
+                        // Anthropic REQUIRES a `max_tokens` and the gateway
+                        // form's is optional, so the roster's ceiling is the
+                        // fallback. A model documenting none and a caller
+                        // naming none is a refusal, not an invented default —
+                        // see `anthropic::…::request::resolve_max_tokens`.
+                        def.model.capabilities().max_output_tokens(),
+                    ),
+                )
+                .await;
 
                 match outcome {
                     Ok(response) => {
@@ -472,19 +493,23 @@ impl Client {
                 // Same egress dispatch as chat_completions, wrapping each
                 // protocol's stream type in `Chunks` so both arms return
                 // one type the commit-boundary logic below can share.
-                let opened = match def.egress {
-                    Egress::OpenAiCompat => openai_compat::api::chat_completions::exchange_stream(
-                        &normalized,
-                        &self.http,
-                        def.provider.name(),
-                        self.base_url(def.provider),
-                        def.auth,
-                        read_timeout,
-                    )
-                    .await
-                    .map(|chunks| Chunks::OpenAiCompat(Box::new(chunks))),
-                    Egress::Anthropic => match reject_untranslatable(&normalized) {
-                        Ok(()) => anthropic::api::messages::exchange_stream(
+                let opened = dispatch_egress(
+                    def.egress,
+                    &normalized,
+                    async {
+                        openai_compat::api::chat_completions::exchange_stream(
+                            &normalized,
+                            &self.http,
+                            def.provider.name(),
+                            self.base_url(def.provider),
+                            def.auth,
+                            read_timeout,
+                        )
+                        .await
+                        .map(|chunks| Chunks::OpenAiCompat(Box::new(chunks)))
+                    },
+                    async {
+                        anthropic::api::messages::exchange_stream(
                             &normalized,
                             &self.http,
                             def.provider.name(),
@@ -494,10 +519,10 @@ impl Client {
                             read_timeout,
                         )
                         .await
-                        .map(|chunks| Chunks::Anthropic(Box::new(chunks))),
-                        Err(e) => Err(e),
+                        .map(|chunks| Chunks::Anthropic(Box::new(chunks)))
                     },
-                };
+                )
+                .await;
 
                 match opened {
                     Ok(mut chunks) => {
